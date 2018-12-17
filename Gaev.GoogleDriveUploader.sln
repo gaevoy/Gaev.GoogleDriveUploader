@@ -1,0 +1,28 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Gaev.GoogleDriveUploader", "Gaev.GoogleDriveUploader\Gaev.GoogleDriveUploader.csproj", "{6993A680-73C9-4E31-AACC-AC5E38F0E3B7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Gaev.GoogleDriveUploader.Console", "Gaev.GoogleDriveUploader.Console\Gaev.GoogleDriveUploader.Console.csproj", "{4D1D0439-0F1A-44DC-9FA1-C5725E1E5362}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Gaev.GoogleDriveUploader.Tests", "Gaev.GoogleDriveUploader.Tests\Gaev.GoogleDriveUploader.Tests.csproj", "{BDC22C6E-76DB-49AC-9534-A738825ADEC6}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6993A680-73C9-4E31-AACC-AC5E38F0E3B7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6993A680-73C9-4E31-AACC-AC5E38F0E3B7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6993A680-73C9-4E31-AACC-AC5E38F0E3B7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6993A680-73C9-4E31-AACC-AC5E38F0E3B7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4D1D0439-0F1A-44DC-9FA1-C5725E1E5362}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4D1D0439-0F1A-44DC-9FA1-C5725E1E5362}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4D1D0439-0F1A-44DC-9FA1-C5725E1E5362}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4D1D0439-0F1A-44DC-9FA1-C5725E1E5362}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BDC22C6E-76DB-49AC-9534-A738825ADEC6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BDC22C6E-76DB-49AC-9534-A738825ADEC6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BDC22C6E-76DB-49AC-9534-A738825ADEC6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BDC22C6E-76DB-49AC-9534-A738825ADEC6}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
