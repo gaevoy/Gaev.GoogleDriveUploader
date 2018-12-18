@@ -61,9 +61,7 @@ namespace Gaev.GoogleDriveUploader.Tests
         private static async Task EnsureTestDirsCreated(DriveService cli)
         {
             Directory.CreateDirectory(GetTempDir());
-            var list = await cli.ListFolders(filter: "GDriveTest");
-            if (!list.Any())
-                await cli.CreateFolder("GDriveTest");
+            await cli.EnsureFolderCreated("root", "GDriveTest");
             using (var db = new DbSession())
             {
                 db.Files.RemoveRange(db.Files.ToList());
