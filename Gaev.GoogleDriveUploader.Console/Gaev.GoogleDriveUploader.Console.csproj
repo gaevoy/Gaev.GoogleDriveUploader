@@ -13,4 +13,10 @@
       <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="2.2.0" />
     </ItemGroup>
 
+    <ItemGroup>
+      <None Update="NLog.config">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+    </ItemGroup>
+
 </Project>

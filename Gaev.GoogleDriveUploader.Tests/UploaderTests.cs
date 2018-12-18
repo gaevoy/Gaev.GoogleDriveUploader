@@ -1,50 +1,78 @@
 using System;
-using System.Threading;
+using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
-using Google.Apis.Auth.OAuth2;
+using Gaev.GoogleDriveUploader.Domain;
+using Gaev.GoogleDriveUploader.EntityFramework;
 using Google.Apis.Drive.v3;
-using Google.Apis.Services;
-using Google.Apis.Util.Store;
-using Xunit;
+using NLog;
+using NUnit.Framework;
 
 namespace Gaev.GoogleDriveUploader.Tests
 {
+    [TestFixture]
     public class UploaderTests
     {
-        [Fact]
+        [Test]
         public async Task Test1()
         {
-            var cli = await NewDriveService();
-            var rootFolders = await cli.ListRootFolders();
+            var cli = await DriveServiceExt.Connect(Config.ReadFromAppSettings());
+            var rootFolders = await cli.ListFolders();
         }
 
-        private static async Task<DriveService> NewDriveService()
+        [Test]
+        public async Task Test2()
         {
-            var credential = await ReadGoogleCredential();
-            return new DriveService(new BaseClientService.Initializer
+            using (var db = new DbSession())
             {
-                HttpClientInitializer = credential,
-                ApplicationName = "Drive API Sample"
-            });
+                await db.Database.EnsureCreatedAsync();
+                var all = db.Folders.ToList();
+                db.Folders.Add(new LocalFolder {Name = Guid.NewGuid().ToString(), SeenAt = DateTime.Now});
+                await db.SaveChangesAsync();
+            }
         }
 
-        private static async Task<ICredential> ReadGoogleCredential()
+        [Test]
+        public async Task It_should_upload_folder_Alphabet()
         {
-            var cfg = Config.ReadFromAppSettings();
-            return await GoogleWebAuthorizationBroker.AuthorizeAsync(
-                new ClientSecrets
-                {
-                    ClientId = cfg.ClientId,
-                    ClientSecret = cfg.ClientSecret
-                },
-                new[]
-                {
-                    DriveService.Scope.Drive,
-                    DriveService.Scope.DriveFile
-                },
-                Environment.UserName,
-                CancellationToken.None,
-                new FileDataStore("Gaev.GoogleDriveUploader.Auth.Store"));
+            // Given
+            var cli = await DriveServiceExt.Connect(Config.ReadFromAppSettings());
+            await EnsureTestDirsCreated(cli);
+            var sourceDir = GetTempDir();
+            var aDir = Path.Combine(sourceDir, "Alphabet");
+            Directory.CreateDirectory(aDir);
+            var files = new[]
+            {
+                new {name = "a.txt", content = RandomString()},
+                new {name = "B.txt", content = RandomString()},
+                new {name = "Cc.txt", content = RandomString()}
+            };
+            foreach (var file in files)
+                File.WriteAllText(Path.Combine(aDir, file.name), file.content);
+            var uploader = new Uploader(new DbDatabase(), LogManager.GetLogger("GoogleDriveUploader"), Config.ReadFromAppSettings());
+
+            // When
+            await uploader.Copy(sourceDir, sourceDir, "GDriveTest");
+
+            // Then
+        }
+
+        private static async Task EnsureTestDirsCreated(DriveService cli)
+        {
+            Directory.CreateDirectory(GetTempDir());
+            var list = await cli.ListFolders(filter: "GDriveTest");
+            if (!list.Any())
+                await cli.CreateFolder("GDriveTest");
+        }
+
+        private static string RandomString()
+        {
+            return string.Join("", Enumerable.Range(0, 20).Select(e => Guid.NewGuid().ToString("N")));
+        }
+
+        private static string GetTempDir()
+        {
+            return Path.Combine(Path.GetTempPath(), "GoogleDriveUploader");
         }
     }
 }

@@ -1,4 +1,5 @@
 ﻿using System;
+using NLog;
 
 namespace Gaev.GoogleDriveUploader.Console
 {
@@ -6,7 +7,8 @@ namespace Gaev.GoogleDriveUploader.Console
     {
         static void Main(string[] args)
         {
-            System.Console.WriteLine("Hello World!");
+            var logger = LogManager.GetLogger("GoogleDriveUploader");
+            logger.Info("Hello World!");
         }
     }
 }
