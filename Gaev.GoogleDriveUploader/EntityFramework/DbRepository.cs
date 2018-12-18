@@ -22,7 +22,8 @@ namespace Gaev.GoogleDriveUploader.EntityFramework
         {
             using (var db = Open())
             {
-                db.Folders.Add(folder);
+                db.Folders.Attach(folder);
+                db.Entry(folder).State = EntityState.Modified;
                 await db.SaveChangesAsync();
             }
         }
@@ -31,8 +32,7 @@ namespace Gaev.GoogleDriveUploader.EntityFramework
         {
             using (var db = Open())
             {
-                db.Folders.Attach(folder);
-                db.Entry(folder).State = EntityState.Modified;
+                db.Folders.Add(folder);
                 await db.SaveChangesAsync();
             }
         }
@@ -41,7 +41,8 @@ namespace Gaev.GoogleDriveUploader.EntityFramework
         {
             using (var db = Open())
             {
-                db.Files.Add(file);
+                db.Files.Attach(file);
+                db.Entry(file).State = EntityState.Modified;
                 await db.SaveChangesAsync();
             }
         }
@@ -50,8 +51,7 @@ namespace Gaev.GoogleDriveUploader.EntityFramework
         {
             using (var db = Open())
             {
-                db.Files.Attach(file);
-                db.Entry(file).State = EntityState.Modified;
+                db.Files.Add(file);
                 await db.SaveChangesAsync();
             }
         }

@@ -49,7 +49,8 @@ namespace Gaev.GoogleDriveUploader.Tests
             };
             foreach (var file in files)
                 File.WriteAllText(Path.Combine(aDir, file.name), file.content);
-            var uploader = new Uploader(new DbDatabase(), LogManager.GetLogger("GoogleDriveUploader"), Config.ReadFromAppSettings());
+            var uploader = new Uploader(new DbDatabase(), LogManager.GetLogger("GoogleDriveUploader"),
+                Config.ReadFromAppSettings());
 
             // When
             await uploader.Copy(sourceDir, sourceDir, "GDriveTest");
@@ -63,6 +64,13 @@ namespace Gaev.GoogleDriveUploader.Tests
             var list = await cli.ListFolders(filter: "GDriveTest");
             if (!list.Any())
                 await cli.CreateFolder("GDriveTest");
+            using (var db = new DbSession())
+            {
+                db.Files.RemoveRange(db.Files.ToList());
+                db.Folders.RemoveRange(db.Folders.ToList());
+                db.Sessions.RemoveRange(db.Sessions.ToList());
+                await db.SaveChangesAsync();
+            }
         }
 
         private static string RandomString()
