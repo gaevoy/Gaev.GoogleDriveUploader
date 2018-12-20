@@ -8,7 +8,7 @@ namespace Gaev.GoogleDriveUploader.Domain
     {
         [Key] public string Name { get; set; }
         public LocalFolder Parent { get; set; }
-        public ICollection<LocalFile> Files { get; set; }
+        public List<LocalFile> Files { get; set; }
         public string GDriveId { get; set; }
         public DateTime SeenAt { get; set; }
         public DateTime? UploadedAt { get; set; }

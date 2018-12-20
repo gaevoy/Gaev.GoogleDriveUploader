@@ -1,8 +1,12 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using Gaev.GoogleDriveUploader.Domain;
+using Google.Apis.Drive.v3;
 using NLog;
 
 namespace Gaev.GoogleDriveUploader
@@ -28,53 +32,118 @@ namespace Gaev.GoogleDriveUploader
             if (!source.FullName.ToLower().StartsWith(baseDir))
                 throw new ApplicationException("baseDir should contain sourceDir");
             var cli = await DriveServiceExt.Connect(_config);
-            var gParentDirs = targetDir.Split('/', '\\').Where(e => !string.IsNullOrWhiteSpace(e));
-            var gParentDirId = "root";
-            foreach (var gDir in gParentDirs)
-            {
-                gParentDirId = (await cli.EnsureFolderCreated(gParentDirId, gDir)).Id;
-            }
+            var targetGDriveId = await EnsureFolderTreeCreated(cli, targetDir);
 
-            _logger.Trace("TargetDirId " + gParentDirId);
+            _logger.Trace("TargetDirId " + targetGDriveId);
             foreach (var child in source.GetDirectories())
             {
                 var folderName = child.FullName.Substring(baseDir.Length + 1);
                 _logger.Info(folderName);
-                var folder = await GetOrCreateDbFolder(folderName);
-                var gDriveId = (await cli.EnsureFolderCreated(gParentDirId, child.Name)).Id;
+                var localFolder = await GetOrCreateLocalFolder(folderName);
+                var gDriveId = (await cli.EnsureFolderCreated(targetGDriveId, child.Name)).Id;
                 _logger.Trace("GDriveId " + gDriveId);
-                if (folder.GDriveId != null && folder.GDriveId != gDriveId)
+                if (localFolder.GDriveId != null && localFolder.GDriveId != gDriveId)
                 {
-                    throw new ApplicationException($"GDriveId for folder are different {folder.GDriveId} <> {gDriveId}");
+                    throw new ApplicationException(
+                        $"GDriveId for folder are different {localFolder.GDriveId} <> {gDriveId}");
                 }
 
-                if (folder.GDriveId == null)
+                if (localFolder.GDriveId == null)
                 {
-                    folder.GDriveId = gDriveId;
-                    folder.UploadedAt = DateTime.Now;
-                    await _db.Update(folder);
+                    localFolder.GDriveId = gDriveId;
+                    localFolder.UploadedAt = DateTime.Now;
+                    await _db.Update(localFolder);
                 }
 
+                var files = child.EnumerateFiles().ToList();
 
-                var _ = folder;
+                var _ = localFolder;
+                foreach (var page in files.ChunkBy(_config.DegreeOfParallelism))
+                    await Task.WhenAll(page.Select(file
+                        => UploadFile(localFolder, file, cli, baseDir)));
+            }
+
+            _logger.Info($"Copied {sourceDir} -> {targetDir} / {baseDir}");
+        }
+
+        private async Task UploadFile(LocalFolder localFolder, FileInfo file, DriveService cli, string baseDir)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var fileName = file.FullName.Substring(baseDir.Length + 1);
+            try
+            {
+                var localFile = await GetOrCreateLocalFile(localFolder, file, fileName);
+                if (localFile.GDriveId == null)
+                {
+                    using (var content = file.OpenRead())
+                    {
+                        var gDriveFile = await cli.EnsureFileUploaded(localFolder.GDriveId, file.Name, content);
+                        localFile.GDriveId = gDriveFile.Id;
+                    }
+
+                    localFile.UploadedAt = DateTime.Now;
+                }
+
+                await _db.Update(localFile);
+                _logger.Info(fileName + " " + stopwatch.Elapsed);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, fileName + " " + stopwatch.Elapsed);
             }
         }
 
-        private async Task<LocalFolder> GetOrCreateDbFolder(string name)
+        private static string CalculateMd5(string filename)
         {
-            name = name.ToLower();
+            using (var md5 = MD5.Create())
+            using (var stream = File.OpenRead(filename))
+                return BitConverter.ToString(md5.ComputeHash(stream)).Replace("-", "").ToLower();
+        }
+
+        private static async Task<string> EnsureFolderTreeCreated(DriveService cli, string path)
+        {
+            var dirs = path.Split('/', '\\').Where(e => !string.IsNullOrWhiteSpace(e));
+            var gId = "root";
+            foreach (var dir in dirs)
+                gId = (await cli.EnsureFolderCreated(gId, dir)).Id;
+            return gId;
+        }
+
+        private async Task<LocalFolder> GetOrCreateLocalFolder(string name)
+        {
             var folder = await _db.GetFolder(name);
             if (folder == null)
             {
                 folder = new LocalFolder
                 {
                     Name = name,
-                    SeenAt = DateTime.Now
+                    SeenAt = DateTime.Now,
+                    Files = new List<LocalFile>()
                 };
                 await _db.Insert(folder);
             }
 
             return folder;
+        }
+
+        private async Task<LocalFile> GetOrCreateLocalFile(LocalFolder localFolder, FileInfo file, string fileName)
+        {
+            var localFile = localFolder.Files.FirstOrDefault(e =>
+                string.Compare(e.Name, fileName, StringComparison.OrdinalIgnoreCase) == 0);
+            if (localFile == null)
+            {
+                localFile = new LocalFile
+                {
+                    Name = fileName,
+                    Folder = localFolder,
+                    SeenAt = DateTime.Now,
+                    Size = file.Length,
+                    Md5 = CalculateMd5(file.FullName)
+                };
+                await _db.Insert(localFile);
+            }
+
+            return localFile;
         }
     }
 }

@@ -1,14 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Gaev.GoogleDriveUploader.EntityFramework;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Drive.v3;
-using Google.Apis.Drive.v3.Data;
 using Google.Apis.Services;
-using Microsoft.EntityFrameworkCore.Storage.Internal;
+using File = Google.Apis.Drive.v3.Data.File;
 
 namespace Gaev.GoogleDriveUploader
 {
@@ -23,6 +23,16 @@ namespace Gaev.GoogleDriveUploader
             req.Q = $"'{parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
             if (filter != null)
                 req.Q += $" and name='{filter}'";
+            return (await req.ExecuteAsync()).Files;
+        }
+
+        public static async Task<IList<File>> ListFoldersAndFiles(
+            this DriveService cli,
+            string parentId = "root")
+        {
+            var req = cli.Files.List();
+            req.Q = $"'{parentId}' in parents";
+            req.Fields = "files(id, name, mimeType, md5Checksum, size)";
             return (await req.ExecuteAsync()).Files;
         }
 
@@ -41,6 +51,29 @@ namespace Gaev.GoogleDriveUploader
             return await req.ExecuteAsync();
         }
 
+        public static async Task<File> UploadFile(this DriveService cli,
+            string parentId,
+            string name,
+            Stream content)
+        {
+            var fileMetadata = new File
+            {
+                Name = name,
+                Parents = new[] {parentId}
+            };
+            var req = cli.Files.Create(fileMetadata, content, MimeTypeMap.GetMimeType(Path.GetExtension(name)));
+            req.Fields = "id";
+            await req.UploadAsync();
+            return req.ResponseBody;
+        }
+
+        public static async Task<byte[]> DownloadFile(this DriveService cli, string id)
+        {
+            var ms = new MemoryStream();
+            await cli.Files.Get(id).DownloadAsync(ms);
+            return ms.ToArray();
+        }
+
         public static async Task<File> EnsureFolderCreated(this DriveService cli,
             string parentId,
             string name)
@@ -48,6 +81,17 @@ namespace Gaev.GoogleDriveUploader
             var list = await cli.ListFolders(parentId, name);
             if (!list.Any())
                 return await cli.CreateFolder(parentId, name);
+            return list.First();
+        }
+
+        public static async Task<File> EnsureFileUploaded(this DriveService cli,
+            string parentId,
+            string name,
+            Stream content)
+        {
+            var list = await cli.ListFolders(parentId, name);
+            if (!list.Any())
+                return await cli.UploadFile(parentId, name, content);
             return list.First();
         }
 

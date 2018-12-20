@@ -12,7 +12,7 @@ namespace Gaev.GoogleDriveUploader.EntityFramework
             using (var db = Open())
             {
                 return await db.Folders
-                    .Where(e => e.Name == name)
+                    .Where(e => e.Name.ToLower() == name.ToLower())
                     .Include(e => e.Files)
                     .FirstOrDefaultAsync();
             }
@@ -43,6 +43,12 @@ namespace Gaev.GoogleDriveUploader.EntityFramework
             {
                 db.Files.Attach(file);
                 db.Entry(file).State = EntityState.Modified;
+                if (file.Folder != null)
+                {
+                    db.Folders.Attach(file.Folder);
+                    db.Entry(file.Folder).State = EntityState.Unchanged;
+                }
+
                 await db.SaveChangesAsync();
             }
         }
@@ -51,6 +57,12 @@ namespace Gaev.GoogleDriveUploader.EntityFramework
         {
             using (var db = Open())
             {
+                if (file.Folder != null)
+                {
+                    db.Folders.Attach(file.Folder);
+                    db.Entry(file.Folder).State = EntityState.Unchanged;
+                }
+
                 db.Files.Add(file);
                 await db.SaveChangesAsync();
             }
