@@ -36,6 +36,16 @@ namespace Gaev.GoogleDriveUploader
             return (await req.ExecuteAsync()).Files;
         }
 
+        public static async Task<IList<File>> ListFiles(
+            this DriveService cli,
+            string parentId = "root")
+        {
+            var req = cli.Files.List();
+            req.Q = $"'{parentId}' in parents and mimeType!='application/vnd.google-apps.folder'";
+            req.Fields = "files(id, name, mimeType, md5Checksum, size)";
+            return (await req.ExecuteAsync()).Files;
+        }
+
         public static async Task<File> CreateFolder(this DriveService cli,
             string parentId,
             string name)

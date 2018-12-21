@@ -93,6 +93,11 @@ namespace Gaev.GoogleDriveUploader.Tests
         public async Task It_should_warn_when_MD5_differs()
         {
         }
+        
+        [Test]
+        public async Task It_should_upload_a_lot_of_files_in_folder()
+        {
+        }
 
         private static string ToBase64String(string str)
         {

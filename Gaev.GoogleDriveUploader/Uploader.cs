@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Gaev.GoogleDriveUploader.Domain;
 using Google.Apis.Drive.v3;
 using NLog;
+using GoogleFile = Google.Apis.Drive.v3.Data.File;
 
 namespace Gaev.GoogleDriveUploader
 {
@@ -33,19 +34,19 @@ namespace Gaev.GoogleDriveUploader
                 throw new ApplicationException("baseDir should contain sourceDir");
             var googleApi = await DriveServiceExt.Connect(_config);
             var targetId = await EnsureFolderTreeCreated(googleApi, targetDir);
-            await UploadFolder(source, targetId, googleApi, baseDir, shouldCreateTarget: false);
+            await UploadFolder(source, targetId, googleApi, baseDir, shouldCreateTargetFolder: false);
             _logger.Info($"Copied {sourceDir} -> {targetDir} / {baseDir}");
         }
 
         private async Task UploadFolder(DirectoryInfo src, string parentTargetId, DriveService googleApi,
-            string baseDir, bool shouldCreateTarget = true)
+            string baseDir, bool shouldCreateTargetFolder = true)
         {
             var stopwatch = Stopwatch.StartNew();
             var folderName = src.FullName.Length == baseDir.Length ? "\\" : src.FullName.Substring(baseDir.Length);
             try
             {
                 var localFolder = await GetOrCreateLocalFolder(folderName);
-                var targetId = shouldCreateTarget
+                var targetId = shouldCreateTargetFolder
                     ? (await googleApi.EnsureFolderCreated(parentTargetId, src.Name)).Id
                     : parentTargetId;
                 if (localFolder.GDriveId != null && localFolder.GDriveId != targetId)
@@ -61,12 +62,16 @@ namespace Gaev.GoogleDriveUploader
                     await _db.Update(localFolder);
                 }
 
+                var targetFiles = (await googleApi.ListFiles(targetId))
+                    .ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
+
                 foreach (var page in src.EnumerateFiles().ChunkBy(_config.DegreeOfParallelism))
                     await Task.WhenAll(page.Select(file
-                        => UploadFile(localFolder, file, googleApi, baseDir)));
+                        => UploadFile(localFolder, file, googleApi, baseDir, targetFiles)));
 
                 foreach (var dir in src.EnumerateDirectories())
                     await UploadFolder(dir, targetId, googleApi, baseDir);
+                
                 _logger.Info(folderName + " " + stopwatch.Elapsed);
             }
             catch (Exception ex)
@@ -75,21 +80,31 @@ namespace Gaev.GoogleDriveUploader
             }
         }
 
-        private async Task UploadFile(LocalFolder srcFolder, FileInfo srcFile, DriveService googleApi, string baseDir)
+        private async Task UploadFile(LocalFolder srcFolder, FileInfo srcFile, DriveService googleApi, string baseDir,
+            Dictionary<string, GoogleFile> targetFiles)
         {
             var stopwatch = Stopwatch.StartNew();
             var fileName = srcFile.FullName.Substring(baseDir.Length);
             try
             {
                 var localFile = await GetOrCreateLocalFile(srcFolder, srcFile, fileName);
-                if (localFile.GDriveId == null)
+                if (targetFiles.TryGetValue(srcFile.Name, out var targetFile))
+                {
+                    if (localFile.GDriveId == null)
+                    {
+                        localFile.GDriveId = targetFile.Id;
+                        localFile.UploadedAt = DateTime.Now;
+                    }
+                    else if (targetFile.Md5Checksum != localFile.Md5)
+                        _logger.Warn(fileName + " uploaded file differs");
+                }
+                else
                 {
                     using (var content = srcFile.OpenRead())
-                    {
-                        var gDriveFile = await googleApi.EnsureFileUploaded(srcFolder.GDriveId, srcFile.Name, content);
-                        localFile.GDriveId = gDriveFile.Id;
-                    }
+                        targetFile = await googleApi.UploadFile(srcFolder.GDriveId, srcFile.Name, content);
+                    _logger.Trace(fileName + " uploaded as " + targetFile.Id);
 
+                    localFile.GDriveId = targetFile.Id;
                     localFile.UploadedAt = DateTime.Now;
                 }
 
