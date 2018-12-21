@@ -34,7 +34,8 @@ namespace Gaev.GoogleDriveUploader
             sourceDir = Path.Combine(baseDir, sourceDir);
             baseDir = new DirectoryInfo(baseDir).FullName;
             var source = new DirectoryInfo(sourceDir);
-            _logger.Info($"baseDir: {baseDir} | sourceDir: {source.FullName} | targetDir: {targetDir} | degreeOfParallelism: {_config.DegreeOfParallelism}");
+            _logger.Info(
+                $"baseDir: {baseDir} | sourceDir: {source.FullName} | targetDir: {targetDir} | degreeOfParallelism: {_config.DegreeOfParallelism}");
             if (!source.FullName.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase))
                 throw new ApplicationException("sourceDir should be inside baseDir");
             if (!source.Exists)
@@ -74,8 +75,12 @@ namespace Gaev.GoogleDriveUploader
                     await _db.Update(localFolder);
                 }
 
-                var targetFiles = (await _googleApi.ListFiles(targetId))
-                    .ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
+                var targetFiles = new Dictionary<string, GoogleFile>(StringComparer.OrdinalIgnoreCase);
+                foreach (var targetFile in await _googleApi.ListFiles(targetId))
+                    if (targetFiles.ContainsKey(targetFile.Name))
+                        _logger.Warn(targetFile.Name + " uploaded multiple times");
+                    else
+                        targetFiles[targetFile.Name] = targetFile;
 
                 var sourceFiles = src.EnumerateFiles().ToList();
                 if (sourceFiles.Count > 1000)
@@ -102,23 +107,29 @@ namespace Gaev.GoogleDriveUploader
             string baseDir,
             Dictionary<string, GoogleFile> targetFiles)
         {
+            await Task.Yield();
             var stopwatch = Stopwatch.StartNew();
             var fileName = srcFile.FullName.Substring(baseDir.Length);
             for (int probe = 1; probe <= 3; probe++)
                 try
                 {
+                    var status = "skipped";
                     var localFile = await GetOrCreateLocalFile(srcFolder, fileName);
                     var md5 = CalculateMd5(srcFile.FullName);
                     if (targetFiles.TryGetValue(srcFile.Name, out var targetFile))
                     {
                         if (targetFile.Md5Checksum != md5)
+                        {
                             _logger.Warn(fileName + " uploaded file differs");
+                            status = "different";
+                        }
                         else if (localFile.GDriveId == null)
                         {
                             localFile.GDriveId = targetFile.Id;
                             localFile.Md5 = md5;
                             localFile.Size = srcFile.Length;
                             localFile.UploadedAt = DateTime.Now;
+                            status = "synced";
                         }
                     }
                     else
@@ -131,15 +142,16 @@ namespace Gaev.GoogleDriveUploader
                         localFile.Md5 = md5;
                         localFile.Size = srcFile.Length;
                         localFile.UploadedAt = DateTime.Now;
+                        status = "uploaded";
                     }
 
                     await _db.Update(localFile);
-                    _logger.Info(fileName + " " + stopwatch.Elapsed);
+                    _logger.Info(fileName + " " + status + " " + stopwatch.Elapsed);
                     break;
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error(ex, fileName + " " + stopwatch.Elapsed);
+                    _logger.Error(ex, fileName + " " + stopwatch.Elapsed + " probe: " + probe);
                 }
         }
 
