@@ -68,6 +68,12 @@ namespace Gaev.GoogleDriveUploader.EntityFramework
             }
         }
 
+        public async Task EnsureCreated()
+        {
+            using (var db = Open())
+                await db.Database.EnsureCreatedAsync();
+        }
+
         private static DbSession Open(bool detectChanges = false)
         {
             var db = new DbSession();

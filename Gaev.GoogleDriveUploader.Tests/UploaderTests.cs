@@ -20,12 +20,28 @@ namespace Gaev.GoogleDriveUploader.Tests
         private DriveService GoogleApi;
 
         [Test]
-        public async Task It_should_upload_Alphabet_folder()
+        public async Task GoogleApi_should_ensure_folder_created()
         {
             // Given
-            var sourceDir = GetTempDir();
-            var aDir = Path.Combine(sourceDir, "Alphabet");
-            Directory.CreateDirectory(aDir);
+            var testDir = await GoogleApi.EnsureFolderCreated("root", "GDriveTest");
+            await GoogleApi.CreateFolder(testDir.Id, "A");
+
+            // When
+            await GoogleApi.EnsureFolderCreated(testDir.Id, "A");
+            await GoogleApi.EnsureFolderCreated(testDir.Id, "B");
+
+            // Then
+            var gdrive = await GetGDriveTree(GoogleApi);
+            Assert.That(gdrive["A"], Is.Not.Null);
+            Assert.That(gdrive["B"], Is.Not.Null);
+        }
+
+        [Test]
+        public async Task Uploader_should_upload_A_folder()
+        {
+            // Given
+            var src = GetTempDir();
+            Directory.CreateDirectory(Path.Combine(src, "A"));
             var files = new[]
             {
                 new {name = "a.txt", content = RandomString()},
@@ -33,22 +49,22 @@ namespace Gaev.GoogleDriveUploader.Tests
                 new {name = "Cc.txt", content = RandomString()}
             };
             foreach (var file in files)
-                File.WriteAllText(Path.Combine(aDir, file.name), file.content);
-            var uploader = new Uploader(new DbDatabase(), Logger, Config.ReadFromAppSettings());
+                File.WriteAllText(Path.Combine(src, "A", file.name), file.content);
+            var uploader = await NewUploader();
 
             // When
-            await uploader.Copy(sourceDir, sourceDir, "GDriveTest");
+            await uploader.Copy(src, "GDriveTest");
 
             // Then
             var gdrive = await GetGDriveTree(GoogleApi);
-            Assert.That(gdrive["Alphabet"], Is.Not.Null);
-            Assert.That((string) gdrive["Alphabet"]["a.txt"].content, Is.EqualTo(ToBase64String(files[0].content)));
-            Assert.That((string) gdrive["Alphabet"]["B.txt"].content, Is.EqualTo(ToBase64String(files[1].content)));
-            Assert.That((string) gdrive["Alphabet"]["Cc.txt"].content, Is.EqualTo(ToBase64String(files[2].content)));
+            Assert.That(gdrive["A"], Is.Not.Null);
+            Assert.That((string) gdrive["A"]["a.txt"].content, Is.EqualTo(ToBase64String(files[0].content)));
+            Assert.That((string) gdrive["A"]["B.txt"].content, Is.EqualTo(ToBase64String(files[1].content)));
+            Assert.That((string) gdrive["A"]["Cc.txt"].content, Is.EqualTo(ToBase64String(files[2].content)));
         }
 
         [Test]
-        public async Task It_should_upload_A_and_AA_and_B_folders()
+        public async Task Uploader_should_upload_A_and_AA_and_B_folders()
         {
             // Given
             var src = GetTempDir();
@@ -61,16 +77,16 @@ namespace Gaev.GoogleDriveUploader.Tests
             File.WriteAllText(Path.Combine(src, "A", f1.name), f1.content);
             File.WriteAllText(Path.Combine(src, "A", "AA", f2.name), f2.content);
             File.WriteAllText(Path.Combine(src, "B", f3.name), f3.content);
-            var uploader = new Uploader(new DbDatabase(), Logger, Config.ReadFromAppSettings());
+            var uploader = await NewUploader();
 
             // When
-            await uploader.Copy(src, src, "GDriveTest");
+            await uploader.Copy(src, "GDriveTest");
 
             // Then
             var gdrive = await GetGDriveTree(GoogleApi);
-            Assert.That((bool)gdrive["A"].dir, Is.True);
-            Assert.That((bool)gdrive["A"]["AA"].dir, Is.True);
-            Assert.That((bool)gdrive["B"].dir, Is.True);
+            Assert.That((bool) gdrive["A"].dir, Is.True);
+            Assert.That((bool) gdrive["A"]["AA"].dir, Is.True);
+            Assert.That((bool) gdrive["B"].dir, Is.True);
             Assert.That((string) gdrive["A"]["1.txt"].content,
                 Is.EqualTo(ToBase64String(f1.content)));
             Assert.That((string) gdrive["A"]["AA"]["2.txt"].content,
@@ -80,23 +96,86 @@ namespace Gaev.GoogleDriveUploader.Tests
         }
 
         [Test]
-        public async Task It_should_upload_Alphabet_then_Notes_folders()
+        public async Task Uploader_should_upload_A_then_B_folders()
         {
+            // Given
+            var src = GetTempDir();
+            Directory.CreateDirectory(Path.Combine(src, "A"));
+            Directory.CreateDirectory(Path.Combine(src, "B"));
+            var f1 = new {name = "1.txt", content = RandomString()};
+            var f2 = new {name = "2.txt", content = RandomString()};
+            var f3 = new {name = "3.txt", content = RandomString()};
+            File.WriteAllText(Path.Combine(src, "A", f1.name), f1.content);
+            File.WriteAllText(Path.Combine(src, "A", f2.name), f2.content);
+            File.WriteAllText(Path.Combine(src, "B", f3.name), f3.content);
+            var uploader = await NewUploader();
+
+            // When
+            await uploader.Copy(Path.Combine(src, "A"), Path.Combine("GDriveTest", "A"), baseDir: src);
+            await uploader.Copy(Path.Combine(src, "B"), Path.Combine("GDriveTest", "B"), baseDir: src);
+
+            // Then
+            var gdrive = await GetGDriveTree(GoogleApi);
+            Assert.That((bool) gdrive["A"].dir, Is.True);
+            Assert.That((bool) gdrive["B"].dir, Is.True);
+            Assert.That((string) gdrive["A"]["1.txt"].content, Is.EqualTo(ToBase64String(f1.content)));
+            Assert.That((string) gdrive["A"]["2.txt"].content, Is.EqualTo(ToBase64String(f2.content)));
+            Assert.That((string) gdrive["B"]["3.txt"].content, Is.EqualTo(ToBase64String(f3.content)));
         }
 
         [Test]
-        public async Task It_should_upload_files_when_base_is_parent_of_source()
+        public async Task Uploader_should_not_override_existing_files()
         {
+            // Given
+            var src = GetTempDir();
+            var f1 = new {name = "1.txt", content = RandomString()};
+            File.WriteAllText(Path.Combine(src, f1.name), f1.content);
+            var uploader = await NewUploader();
+            await uploader.Copy(src, "GDriveTest");
+
+            // When
+            var f2 = new {name = "1.txt", content = RandomString()};
+            File.WriteAllText(Path.Combine(src, f2.name), f2.content);
+            await uploader.Copy(src, "GDriveTest");
+
+            // Then
+            var gdrive = await GetGDriveTree(GoogleApi);
+            Assert.That((string) gdrive["1.txt"].content, Is.EqualTo(ToBase64String(f1.content)));
+        }
+
+        [Test, Explicit("Long running")]
+        public async Task Uploader_should_upload_1000_files()
+        {
+            // Given
+            var src = GetTempDir();
+            var files = Enumerable
+                .Range(1, 1000)
+                .Select(i => new {name = i + ".txt", content = RandomString()})
+                .ToList();
+            foreach (var file in files)
+                File.WriteAllText(Path.Combine(src, file.name), file.content);
+            var uploader = await NewUploader();
+
+            // When
+            await uploader.Copy(src, "GDriveTest");
+
+            // Then
+            var gdrive = await GetGDriveTree(GoogleApi);
+            foreach (var file in files)
+                Assert.That((string) gdrive[file.name].content, Is.EqualTo(ToBase64String(file.content)), file.name + " is not uploaded");
         }
 
         [Test]
-        public async Task It_should_warn_when_MD5_differs()
+        public async Task Uploader_should_be_able_to_cancel()
         {
+            Assert.Fail("To be implemented");
         }
-        
-        [Test]
-        public async Task It_should_upload_a_lot_of_files_in_folder()
+
+        private static async Task<Uploader> NewUploader()
         {
+            var config = Config.ReadFromAppSettings();
+            var googleApi = await DriveServiceExt.Connect(config);
+            return new Uploader(new DbDatabase(), Logger, config, googleApi);
         }
 
         private static string ToBase64String(string str)

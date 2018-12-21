@@ -23,6 +23,7 @@ namespace Gaev.GoogleDriveUploader
             req.Q = $"'{parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false";
             if (filter != null)
                 req.Q += $" and name='{filter}'";
+            req.PageSize = 1000;
             return (await req.ExecuteAsync()).Files;
         }
 
@@ -32,6 +33,7 @@ namespace Gaev.GoogleDriveUploader
         {
             var req = cli.Files.List();
             req.Q = $"'{parentId}' in parents";
+            req.PageSize = 1000;
             req.Fields = "files(id, name, mimeType, md5Checksum, size)";
             return (await req.ExecuteAsync()).Files;
         }
@@ -42,6 +44,7 @@ namespace Gaev.GoogleDriveUploader
         {
             var req = cli.Files.List();
             req.Q = $"'{parentId}' in parents and mimeType!='application/vnd.google-apps.folder'";
+            req.PageSize = 1000;
             req.Fields = "files(id, name, mimeType, md5Checksum, size)";
             return (await req.ExecuteAsync()).Files;
         }

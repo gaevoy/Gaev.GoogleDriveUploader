@@ -17,37 +17,49 @@ namespace Gaev.GoogleDriveUploader
         private readonly IDatabase _db;
         private readonly ILogger _logger;
         private readonly Config _config;
+        private readonly DriveService _googleApi;
 
-        public Uploader(IDatabase db, ILogger logger, Config config)
+        public Uploader(IDatabase db, ILogger logger, Config config, DriveService googleApi)
         {
             _db = db;
             _logger = logger;
             _config = config;
+            _googleApi = googleApi;
         }
 
-        public async Task Copy(string baseDir, string sourceDir, string targetDir)
-        {
-            _logger.Info($"Copying... {sourceDir} -> {targetDir} / {baseDir}");
-            baseDir = new DirectoryInfo(baseDir).FullName;
-            var source = new DirectoryInfo(sourceDir);
-            if (!source.FullName.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase))
-                throw new ApplicationException("baseDir should contain sourceDir");
-            var googleApi = await DriveServiceExt.Connect(_config);
-            var targetId = await EnsureFolderTreeCreated(googleApi, targetDir);
-            await UploadFolder(source, targetId, googleApi, baseDir, shouldCreateTargetFolder: false);
-            _logger.Info($"Copied {sourceDir} -> {targetDir} / {baseDir}");
-        }
-
-        private async Task UploadFolder(DirectoryInfo src, string parentTargetId, DriveService googleApi,
-            string baseDir, bool shouldCreateTargetFolder = true)
+        public async Task Copy(string sourceDir, string targetDir, string baseDir = null)
         {
             var stopwatch = Stopwatch.StartNew();
-            var folderName = src.FullName.Length == baseDir.Length ? "\\" : src.FullName.Substring(baseDir.Length);
+            baseDir = baseDir ?? sourceDir;
+            sourceDir = Path.Combine(baseDir, sourceDir);
+            baseDir = new DirectoryInfo(baseDir).FullName;
+            var source = new DirectoryInfo(sourceDir);
+            _logger.Info($"baseDir: {baseDir} | sourceDir: {source.FullName} | targetDir: {targetDir} | degreeOfParallelism: {_config.DegreeOfParallelism}");
+            if (!source.FullName.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase))
+                throw new ApplicationException("sourceDir should be inside baseDir");
+            if (!source.Exists)
+                throw new ApplicationException("source is not exist");
+
+            _logger.Info($"Copying... {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir}");
+            var targetId = await EnsureFolderTreeCreated(targetDir);
+            await UploadFolder(source, targetId, baseDir, shouldCreateTargetFolder: false);
+            _logger.Info(
+                $"Copied {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir} {stopwatch.Elapsed}");
+        }
+
+        private async Task UploadFolder(
+            DirectoryInfo src,
+            string parentTargetId,
+            string baseDir,
+            bool shouldCreateTargetFolder = true)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var folderName = GetShortFolderName(baseDir, src.FullName);
             try
             {
                 var localFolder = await GetOrCreateLocalFolder(folderName);
                 var targetId = shouldCreateTargetFolder
-                    ? (await googleApi.EnsureFolderCreated(parentTargetId, src.Name)).Id
+                    ? (await _googleApi.EnsureFolderCreated(parentTargetId, src.Name)).Id
                     : parentTargetId;
                 if (localFolder.GDriveId != null && localFolder.GDriveId != targetId)
                 {
@@ -62,16 +74,20 @@ namespace Gaev.GoogleDriveUploader
                     await _db.Update(localFolder);
                 }
 
-                var targetFiles = (await googleApi.ListFiles(targetId))
+                var targetFiles = (await _googleApi.ListFiles(targetId))
                     .ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
 
-                foreach (var page in src.EnumerateFiles().ChunkBy(_config.DegreeOfParallelism))
+                var sourceFiles = src.EnumerateFiles().ToList();
+                if (sourceFiles.Count > 1000)
+                    throw new NotImplementedException("Cannot upload more then 1000 files. Count: " +
+                                                      sourceFiles.Count);
+                foreach (var page in sourceFiles.ChunkBy(_config.DegreeOfParallelism))
                     await Task.WhenAll(page.Select(file
-                        => UploadFile(localFolder, file, googleApi, baseDir, targetFiles)));
+                        => UploadFile(localFolder, file, baseDir, targetFiles)));
 
                 foreach (var dir in src.EnumerateDirectories())
-                    await UploadFolder(dir, targetId, googleApi, baseDir);
-                
+                    await UploadFolder(dir, targetId, baseDir);
+
                 _logger.Info(folderName + " " + stopwatch.Elapsed);
             }
             catch (Exception ex)
@@ -80,41 +96,51 @@ namespace Gaev.GoogleDriveUploader
             }
         }
 
-        private async Task UploadFile(LocalFolder srcFolder, FileInfo srcFile, DriveService googleApi, string baseDir,
+        private async Task UploadFile(
+            LocalFolder srcFolder,
+            FileInfo srcFile,
+            string baseDir,
             Dictionary<string, GoogleFile> targetFiles)
         {
             var stopwatch = Stopwatch.StartNew();
             var fileName = srcFile.FullName.Substring(baseDir.Length);
-            try
-            {
-                var localFile = await GetOrCreateLocalFile(srcFolder, srcFile, fileName);
-                if (targetFiles.TryGetValue(srcFile.Name, out var targetFile))
+            for (int probe = 1; probe <= 3; probe++)
+                try
                 {
-                    if (localFile.GDriveId == null)
+                    var localFile = await GetOrCreateLocalFile(srcFolder, fileName);
+                    var md5 = CalculateMd5(srcFile.FullName);
+                    if (targetFiles.TryGetValue(srcFile.Name, out var targetFile))
                     {
+                        if (targetFile.Md5Checksum != md5)
+                            _logger.Warn(fileName + " uploaded file differs");
+                        else if (localFile.GDriveId == null)
+                        {
+                            localFile.GDriveId = targetFile.Id;
+                            localFile.Md5 = md5;
+                            localFile.Size = srcFile.Length;
+                            localFile.UploadedAt = DateTime.Now;
+                        }
+                    }
+                    else
+                    {
+                        using (var content = srcFile.OpenRead())
+                            targetFile = await _googleApi.UploadFile(srcFolder.GDriveId, srcFile.Name, content);
+                        _logger.Trace(fileName + " uploaded as " + targetFile.Id);
+
                         localFile.GDriveId = targetFile.Id;
+                        localFile.Md5 = md5;
+                        localFile.Size = srcFile.Length;
                         localFile.UploadedAt = DateTime.Now;
                     }
-                    else if (targetFile.Md5Checksum != localFile.Md5)
-                        _logger.Warn(fileName + " uploaded file differs");
+
+                    await _db.Update(localFile);
+                    _logger.Info(fileName + " " + stopwatch.Elapsed);
+                    break;
                 }
-                else
+                catch (Exception ex)
                 {
-                    using (var content = srcFile.OpenRead())
-                        targetFile = await googleApi.UploadFile(srcFolder.GDriveId, srcFile.Name, content);
-                    _logger.Trace(fileName + " uploaded as " + targetFile.Id);
-
-                    localFile.GDriveId = targetFile.Id;
-                    localFile.UploadedAt = DateTime.Now;
+                    _logger.Error(ex, fileName + " " + stopwatch.Elapsed);
                 }
-
-                await _db.Update(localFile);
-                _logger.Info(fileName + " " + stopwatch.Elapsed);
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, fileName + " " + stopwatch.Elapsed);
-            }
         }
 
         private static string CalculateMd5(string filename)
@@ -124,12 +150,12 @@ namespace Gaev.GoogleDriveUploader
                 return BitConverter.ToString(md5.ComputeHash(stream)).Replace("-", "").ToLower();
         }
 
-        private static async Task<string> EnsureFolderTreeCreated(DriveService cli, string path)
+        private async Task<string> EnsureFolderTreeCreated(string path)
         {
             var dirs = path.Split('/', '\\').Where(e => !string.IsNullOrWhiteSpace(e));
             var gId = "root";
             foreach (var dir in dirs)
-                gId = (await cli.EnsureFolderCreated(gId, dir)).Id;
+                gId = (await _googleApi.EnsureFolderCreated(gId, dir)).Id;
             return gId;
         }
 
@@ -150,7 +176,7 @@ namespace Gaev.GoogleDriveUploader
             return folder;
         }
 
-        private async Task<LocalFile> GetOrCreateLocalFile(LocalFolder localFolder, FileInfo file, string fileName)
+        private async Task<LocalFile> GetOrCreateLocalFile(LocalFolder localFolder, string fileName)
         {
             var localFile = localFolder.Files.FirstOrDefault(e =>
                 string.Compare(e.Name, fileName, StringComparison.OrdinalIgnoreCase) == 0);
@@ -160,14 +186,17 @@ namespace Gaev.GoogleDriveUploader
                 {
                     Name = fileName,
                     Folder = localFolder,
-                    SeenAt = DateTime.Now,
-                    Size = file.Length,
-                    Md5 = CalculateMd5(file.FullName)
+                    SeenAt = DateTime.Now
                 };
                 await _db.Insert(localFile);
             }
 
             return localFile;
+        }
+
+        private static string GetShortFolderName(string baseDir, string srcDir)
+        {
+            return srcDir.Length == baseDir.Length ? "\\" : srcDir.Substring(baseDir.Length);
         }
     }
 }
