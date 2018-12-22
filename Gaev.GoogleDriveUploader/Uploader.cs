@@ -86,9 +86,12 @@ namespace Gaev.GoogleDriveUploader
                 if (sourceFiles.Count > 1000)
                     throw new NotImplementedException("Cannot upload more then 1000 files. Count: " +
                                                       sourceFiles.Count);
+
+                var localFiles = localFolder.Files.ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
+
                 foreach (var page in sourceFiles.ChunkBy(_config.DegreeOfParallelism))
                     await Task.WhenAll(page.Select(file
-                        => UploadFile(localFolder, file, baseDir, targetFiles)));
+                        => UploadFile(localFolder, localFiles, file, baseDir, targetFiles)));
 
                 foreach (var dir in src.EnumerateDirectories())
                     await UploadFolder(dir, targetId, baseDir);
@@ -103,6 +106,7 @@ namespace Gaev.GoogleDriveUploader
 
         private async Task UploadFile(
             LocalFolder srcFolder,
+            Dictionary<string, LocalFile> localFiles,
             FileInfo srcFile,
             string baseDir,
             Dictionary<string, GoogleFile> targetFiles)
@@ -114,7 +118,7 @@ namespace Gaev.GoogleDriveUploader
                 try
                 {
                     var status = "skipped";
-                    var localFile = await GetOrCreateLocalFile(srcFolder, fileName);
+                    var localFile = await GetOrCreateLocalFile(srcFolder, localFiles, fileName);
                     var md5 = CalculateMd5(srcFile.FullName);
                     if (targetFiles.TryGetValue(srcFile.Name, out var targetFile))
                     {
@@ -189,11 +193,11 @@ namespace Gaev.GoogleDriveUploader
             return folder;
         }
 
-        private async Task<LocalFile> GetOrCreateLocalFile(LocalFolder localFolder, string fileName)
+        private async Task<LocalFile> GetOrCreateLocalFile(
+            LocalFolder localFolder,
+            Dictionary<string, LocalFile> localFiles, string fileName)
         {
-            var localFile = localFolder.Files.FirstOrDefault(e =>
-                string.Compare(e.Name, fileName, StringComparison.OrdinalIgnoreCase) == 0);
-            if (localFile == null)
+            if (!localFiles.TryGetValue(fileName, out var localFile))
             {
                 localFile = new LocalFile
                 {
