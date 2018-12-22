@@ -202,7 +202,7 @@ namespace Gaev.GoogleDriveUploader
                 localFile = new LocalFile
                 {
                     Name = fileName,
-                    Folder = localFolder,
+                    FolderName = localFolder.Name,
                     SeenAt = DateTime.Now
                 };
                 await _db.Insert(localFile);
