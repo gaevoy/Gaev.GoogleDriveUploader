@@ -173,6 +173,7 @@ namespace Gaev.GoogleDriveUploader
 
         private async Task<LocalFolder> GetOrCreateLocalFolder(string name)
         {
+            name = name.ToLower();
             var folder = await _db.GetFolder(name);
             if (folder == null)
             {

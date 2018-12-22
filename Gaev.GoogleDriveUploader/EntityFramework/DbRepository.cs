@@ -12,7 +12,7 @@ namespace Gaev.GoogleDriveUploader.EntityFramework
             using (var db = Open())
             {
                 return await db.Folders
-                    .Where(e => e.Name.ToLower() == name.ToLower())
+                    .Where(e => e.Name == name)
                     .Include(e => e.Files)
                     .FirstOrDefaultAsync();
             }

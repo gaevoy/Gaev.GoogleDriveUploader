@@ -143,6 +143,29 @@ namespace Gaev.GoogleDriveUploader.Tests
             Assert.That((string) gdrive["1.txt"].content, Is.EqualTo(ToBase64String(f1.content)));
         }
 
+        [Test]
+        public async Task Uploader_should_respect_cyrillic()
+        {
+            // Given
+            var uploader = await NewUploader();
+            var src = GetTempDir();
+            Directory.CreateDirectory(Path.Combine(src, "Папка 1"));
+            var f1 = new {name = "Файл 1.txt", content = RandomString()};
+            File.WriteAllText(Path.Combine(src, "Папка 1", f1.name), f1.content);
+            await uploader.Copy(src, "GDriveTest");
+
+            // When
+            var f2 = new {name = "Файл 2.txt", content = RandomString()};
+            File.WriteAllText(Path.Combine(src, "Папка 1", f2.name), f2.content);
+            await uploader.Copy(src, "GDriveTest");
+
+            // Then
+            var gdrive = await GetGDriveTree(GoogleApi);
+            Assert.That((bool) gdrive["Папка 1"].dir, Is.True);
+            Assert.That((string) gdrive["Папка 1"]["Файл 1.txt"].content, Is.EqualTo(ToBase64String(f1.content)));
+            Assert.That((string) gdrive["Папка 1"]["Файл 2.txt"].content, Is.EqualTo(ToBase64String(f2.content)));
+        }
+
         [Test, Explicit("Long running")]
         public async Task Uploader_should_upload_1000_files()
         {
@@ -162,7 +185,8 @@ namespace Gaev.GoogleDriveUploader.Tests
             // Then
             var gdrive = await GetGDriveTree(GoogleApi);
             foreach (var file in files)
-                Assert.That((string) gdrive[file.name].content, Is.EqualTo(ToBase64String(file.content)), file.name + " is not uploaded");
+                Assert.That((string) gdrive[file.name].content, Is.EqualTo(ToBase64String(file.content)),
+                    file.name + " is not uploaded");
         }
 
         [Test]
