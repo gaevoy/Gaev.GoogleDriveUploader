@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Gaev.GoogleDriveUploader.Domain;
 using Google.Apis.Drive.v3;
+using Newtonsoft.Json;
 using NLog;
 using GoogleFile = Google.Apis.Drive.v3.Data.File;
 
@@ -19,7 +20,7 @@ namespace Gaev.GoogleDriveUploader
         private readonly ILogger _logger;
         private readonly Config _config;
         private readonly DriveService _googleApi;
-        private SemaphoreSlim _throttler;
+        private readonly SemaphoreSlim _throttler;
 
         public Uploader(IDatabase db, ILogger logger, Config config, DriveService googleApi)
         {
@@ -46,15 +47,22 @@ namespace Gaev.GoogleDriveUploader
 
             _logger.Info($"Copying... {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir}");
             var targetId = await EnsureFolderTreeCreated(targetDir);
-            await UploadFolder(source, targetId, baseDir, shouldCreateTargetFolder: false);
+            var statistic = new UploadingStatistic();
+            await UploadFolder(source, targetId, baseDir, statistic, shouldCreateTargetFolder: false);
             _logger.Info(
                 $"Copied {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir} {stopwatch.Elapsed}");
+            var jsonStatistic = JsonConvert.SerializeObject(statistic);
+            if (statistic.NumberOfFailedUploads > 0)
+                _logger.Warn(jsonStatistic);
+            else
+                _logger.Info(jsonStatistic);
         }
 
         private async Task UploadFolder(
             DirectoryInfo src,
             string parentTargetId,
             string baseDir,
+            UploadingStatistic statistic,
             bool shouldCreateTargetFolder = true)
         {
             var stopwatch = Stopwatch.StartNew();
@@ -94,10 +102,10 @@ namespace Gaev.GoogleDriveUploader
 
                 await Task.WhenAll(sourceFiles.Select(file
                     => Throttle(()
-                        => UploadFile(localFolder, localFiles, file, baseDir, targetFiles))));
+                        => UploadFile(localFolder, localFiles, file, baseDir, targetFiles, statistic))));
 
                 foreach (var dir in src.EnumerateDirectories())
-                    await UploadFolder(dir, targetId, baseDir);
+                    await UploadFolder(dir, targetId, baseDir, statistic);
 
                 _logger.Info(folderName + " " + stopwatch.Elapsed);
             }
@@ -112,15 +120,19 @@ namespace Gaev.GoogleDriveUploader
             Dictionary<string, LocalFile> localFiles,
             FileInfo srcFile,
             string baseDir,
-            Dictionary<string, GoogleFile> targetFiles)
+            Dictionary<string, GoogleFile> targetFiles,
+            UploadingStatistic statistic)
         {
             var stopwatch = Stopwatch.StartNew();
             var fileName = srcFile.FullName.Substring(baseDir.Length);
+            bool uploaded = true;
+            LocalFile localFile = null;
             for (int probe = 1; probe <= 3; probe++)
                 try
                 {
+                    uploaded = true;
                     var status = "skipped";
-                    var localFile = await GetOrCreateLocalFile(srcFolder, localFiles, fileName);
+                    localFile = localFile ?? await GetOrCreateLocalFile(srcFolder, localFiles, fileName);
                     var md5 = CalculateMd5(srcFile.FullName);
                     if (targetFiles.TryGetValue(srcFile.Name, out var targetFile))
                     {
@@ -128,6 +140,7 @@ namespace Gaev.GoogleDriveUploader
                         {
                             _logger.Warn(fileName + " uploaded file differs");
                             status = "different";
+                            uploaded = false;
                         }
                         else if (localFile.GDriveId == null)
                         {
@@ -135,30 +148,41 @@ namespace Gaev.GoogleDriveUploader
                             localFile.Md5 = md5;
                             localFile.Size = srcFile.Length;
                             localFile.UploadedAt = DateTime.Now;
+                            await _db.Update(localFile);
                             status = "synced";
                         }
                     }
                     else
                     {
-                        using (var content = srcFile.OpenRead())
-                            targetFile = await _googleApi.UploadFile(srcFolder.GDriveId, srcFile.Name, content);
+                        var content = await ReadFile(srcFile);
+                        targetFile = await _googleApi.UploadFile(srcFolder.GDriveId, srcFile.Name, content);
+                        if (targetFile == null)
+                            throw new ApplicationException(
+                                fileName + " file has not been uploaded, UploadFile returned null");
                         _logger.Trace(fileName + " uploaded as " + targetFile.Id);
 
                         localFile.GDriveId = targetFile.Id;
                         localFile.Md5 = md5;
                         localFile.Size = srcFile.Length;
                         localFile.UploadedAt = DateTime.Now;
+                        await _db.Update(localFile);
                         status = "uploaded";
+                        lock (statistic)
+                            statistic.SizeUploaded += localFile.Size;
                     }
 
-                    await _db.Update(localFile);
                     _logger.Info(fileName + " " + status + " " + stopwatch.Elapsed);
                     break;
                 }
                 catch (Exception ex)
                 {
                     _logger.Error(ex, fileName + " " + stopwatch.Elapsed + " probe: " + probe);
+                    uploaded = false;
                 }
+
+            if (!uploaded)
+                lock (statistic)
+                    statistic.NumberOfFailedUploads++;
         }
 
         private static string CalculateMd5(string filename)
@@ -230,6 +254,21 @@ namespace Gaev.GoogleDriveUploader
         private static string GetShortFolderName(string baseDir, string srcDir)
         {
             return srcDir.Length == baseDir.Length ? "\\" : srcDir.Substring(baseDir.Length);
+        }
+
+        private static async Task<MemoryStream> ReadFile(FileInfo srcFile)
+        {
+            // https://github.com/googleapis/google-api-dotnet-client/issues/833#issuecomment-362898041
+            var content = new MemoryStream();
+            using (var stream = srcFile.OpenRead())
+                await stream.CopyToAsync(content);
+            return content;
+        }
+
+        class UploadingStatistic
+        {
+            public int NumberOfFailedUploads { get; set; }
+            public long SizeUploaded { get; set; }
         }
     }
 }
