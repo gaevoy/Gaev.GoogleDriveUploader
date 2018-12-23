@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
 using Gaev.GoogleDriveUploader.Domain;
 using Google.Apis.Drive.v3;
@@ -18,6 +19,7 @@ namespace Gaev.GoogleDriveUploader
         private readonly ILogger _logger;
         private readonly Config _config;
         private readonly DriveService _googleApi;
+        private SemaphoreSlim _throttler;
 
         public Uploader(IDatabase db, ILogger logger, Config config, DriveService googleApi)
         {
@@ -25,6 +27,7 @@ namespace Gaev.GoogleDriveUploader
             _logger = logger;
             _config = config;
             _googleApi = googleApi;
+            _throttler = new SemaphoreSlim(config.DegreeOfParallelism);
         }
 
         public async Task Copy(string sourceDir, string targetDir, string baseDir = null)
@@ -89,9 +92,9 @@ namespace Gaev.GoogleDriveUploader
 
                 var localFiles = localFolder.Files.ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
 
-                foreach (var page in sourceFiles.ChunkBy(_config.DegreeOfParallelism))
-                    await Task.WhenAll(page.Select(file
-                        => UploadFile(localFolder, localFiles, file, baseDir, targetFiles)));
+                await Task.WhenAll(sourceFiles.Select(file
+                    => Throttle(()
+                        => UploadFile(localFolder, localFiles, file, baseDir, targetFiles))));
 
                 foreach (var dir in src.EnumerateDirectories())
                     await UploadFolder(dir, targetId, baseDir);
@@ -111,7 +114,6 @@ namespace Gaev.GoogleDriveUploader
             string baseDir,
             Dictionary<string, GoogleFile> targetFiles)
         {
-            await Task.Yield();
             var stopwatch = Stopwatch.StartNew();
             var fileName = srcFile.FullName.Substring(baseDir.Length);
             for (int probe = 1; probe <= 3; probe++)
@@ -209,6 +211,20 @@ namespace Gaev.GoogleDriveUploader
             }
 
             return localFile;
+        }
+
+        private async Task Throttle(Func<Task> act)
+        {
+            await Task.Yield();
+            await _throttler.WaitAsync();
+            try
+            {
+                await act();
+            }
+            finally
+            {
+                _throttler.Release();
+            }
         }
 
         private static string GetShortFolderName(string baseDir, string srcDir)

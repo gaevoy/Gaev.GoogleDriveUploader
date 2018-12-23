@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Gaev.GoogleDriveUploader.Domain;
 using Gaev.GoogleDriveUploader.EntityFramework;
 using Google.Apis.Drive.v3;
 using Newtonsoft.Json;
