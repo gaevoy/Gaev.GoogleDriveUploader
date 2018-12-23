@@ -51,10 +51,11 @@ namespace Gaev.GoogleDriveUploader
             await UploadFolder(source, targetId, baseDir, stat, shouldCreateTargetFolder: false);
             _logger.Information(
                 $"Copied {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir} {stopwatch.Elapsed}");
-            if (stat.NumberOfFailedUploads > 0)
-                _logger.Warning("{@statistic}", new {stat.NumberOfFailedUploads, stat.SizeUploaded});
+            if (stat.NumberOfFailedFolders > 0 || stat.NumberOfFailedFiles > 0)
+                _logger.Warning("{@statistic}",
+                    new {stat.NumberOfFailedFolders, stat.NumberOfFailedFiles, stat.SizeUploaded});
             else
-                _logger.Information("{@statistic}", new {stat.NumberOfFailedUploads, stat.SizeUploaded});
+                _logger.Information("{@statistic}", new {stat.SizeUploaded});
         }
 
         private async Task UploadFolder(
@@ -111,6 +112,8 @@ namespace Gaev.GoogleDriveUploader
             catch (Exception ex)
             {
                 _logger.Error(ex, folderName + " " + stopwatch.Elapsed);
+                lock (statistic)
+                    statistic.NumberOfFailedFolders++;
             }
         }
 
@@ -181,7 +184,7 @@ namespace Gaev.GoogleDriveUploader
 
             if (!uploaded)
                 lock (statistic)
-                    statistic.NumberOfFailedUploads++;
+                    statistic.NumberOfFailedFiles++;
         }
 
         private static string CalculateMd5(string filename)
@@ -266,7 +269,8 @@ namespace Gaev.GoogleDriveUploader
 
         class UploadingStatistic
         {
-            public int NumberOfFailedUploads { get; set; }
+            public int NumberOfFailedFiles { get; set; }
+            public int NumberOfFailedFolders { get; set; }
             public long SizeUploaded { get; set; }
         }
     }
