@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using Gaev.GoogleDriveUploader.Domain;
 using Google.Apis.Drive.v3;
 using Newtonsoft.Json;
-using NLog;
+using Serilog;
 using GoogleFile = Google.Apis.Drive.v3.Data.File;
 
 namespace Gaev.GoogleDriveUploader
@@ -38,24 +38,23 @@ namespace Gaev.GoogleDriveUploader
             sourceDir = Path.Combine(baseDir, sourceDir);
             baseDir = new DirectoryInfo(baseDir).FullName;
             var source = new DirectoryInfo(sourceDir);
-            _logger.Info(
+            _logger.Information(
                 $"baseDir: {baseDir} | sourceDir: {source.FullName} | targetDir: {targetDir} | degreeOfParallelism: {_config.DegreeOfParallelism}");
             if (!source.FullName.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase))
                 throw new ApplicationException("sourceDir should be inside baseDir");
             if (!source.Exists)
                 throw new ApplicationException("source is not exist");
 
-            _logger.Info($"Copying... {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir}");
+            _logger.Information($"Copying... {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir}");
             var targetId = await EnsureFolderTreeCreated(targetDir);
-            var statistic = new UploadingStatistic();
-            await UploadFolder(source, targetId, baseDir, statistic, shouldCreateTargetFolder: false);
-            _logger.Info(
+            var stat = new UploadingStatistic();
+            await UploadFolder(source, targetId, baseDir, stat, shouldCreateTargetFolder: false);
+            _logger.Information(
                 $"Copied {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir} {stopwatch.Elapsed}");
-            var jsonStatistic = JsonConvert.SerializeObject(statistic);
-            if (statistic.NumberOfFailedUploads > 0)
-                _logger.Warn(jsonStatistic);
+            if (stat.NumberOfFailedUploads > 0)
+                _logger.Warning("{@statistic}", new {stat.NumberOfFailedUploads, stat.SizeUploaded});
             else
-                _logger.Info(jsonStatistic);
+                _logger.Information("{@statistic}", new {stat.NumberOfFailedUploads, stat.SizeUploaded});
         }
 
         private async Task UploadFolder(
@@ -89,7 +88,7 @@ namespace Gaev.GoogleDriveUploader
                 var targetFiles = new Dictionary<string, GoogleFile>(StringComparer.OrdinalIgnoreCase);
                 foreach (var targetFile in await _googleApi.ListFiles(targetId))
                     if (targetFiles.ContainsKey(targetFile.Name))
-                        _logger.Warn(targetFile.Name + " uploaded multiple times");
+                        _logger.Warning(targetFile.Name + " uploaded multiple times");
                     else
                         targetFiles[targetFile.Name] = targetFile;
 
@@ -107,7 +106,7 @@ namespace Gaev.GoogleDriveUploader
                 foreach (var dir in src.EnumerateDirectories())
                     await UploadFolder(dir, targetId, baseDir, statistic);
 
-                _logger.Info(folderName + " " + stopwatch.Elapsed);
+                _logger.Information(folderName + " " + stopwatch.Elapsed);
             }
             catch (Exception ex)
             {
@@ -138,7 +137,7 @@ namespace Gaev.GoogleDriveUploader
                     {
                         if (targetFile.Md5Checksum != md5)
                         {
-                            _logger.Warn(fileName + " uploaded file differs");
+                            _logger.Warning(fileName + " uploaded file differs");
                             status = "different";
                             uploaded = false;
                         }
@@ -159,7 +158,7 @@ namespace Gaev.GoogleDriveUploader
                         if (targetFile == null)
                             throw new ApplicationException(
                                 fileName + " file has not been uploaded, UploadFile returned null");
-                        _logger.Trace(fileName + " uploaded as " + targetFile.Id);
+                        _logger.Debug(fileName + " uploaded as " + targetFile.Id);
 
                         localFile.GDriveId = targetFile.Id;
                         localFile.Md5 = md5;
@@ -171,7 +170,7 @@ namespace Gaev.GoogleDriveUploader
                             statistic.SizeUploaded += localFile.Size;
                     }
 
-                    _logger.Info(fileName + " " + status + " " + stopwatch.Elapsed);
+                    _logger.Information(fileName + " " + status + " " + stopwatch.Elapsed);
                     break;
                 }
                 catch (Exception ex)

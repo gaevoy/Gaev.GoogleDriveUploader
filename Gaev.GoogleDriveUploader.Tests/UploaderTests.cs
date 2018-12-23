@@ -7,15 +7,14 @@ using System.Threading.Tasks;
 using Gaev.GoogleDriveUploader.EntityFramework;
 using Google.Apis.Drive.v3;
 using Newtonsoft.Json;
-using NLog;
 using NUnit.Framework;
+using Serilog;
 
 namespace Gaev.GoogleDriveUploader.Tests
 {
     [TestFixture, NonParallelizable]
     public class UploaderTests
     {
-        private static readonly Logger Logger = LogManager.GetLogger("GoogleDriveUploader");
         private DriveService GoogleApi;
 
         [Test]
@@ -198,7 +197,10 @@ namespace Gaev.GoogleDriveUploader.Tests
         {
             var config = Config.ReadFromAppSettings();
             var googleApi = await DriveServiceExt.Connect(config);
-            return new Uploader(new DbDatabase(), Logger, config, googleApi);
+            var logger = new LoggerConfiguration()
+                .WriteTo.Console()
+                .CreateLogger();
+            return new Uploader(new DbDatabase(), logger, config, googleApi);
         }
 
         private static string ToBase64String(string str)

@@ -2,7 +2,7 @@
 using System.Threading.Tasks;
 using CommandLine;
 using Gaev.GoogleDriveUploader.EntityFramework;
-using NLog;
+using Serilog;
 
 namespace Gaev.GoogleDriveUploader.Console
 {
@@ -15,7 +15,10 @@ namespace Gaev.GoogleDriveUploader.Console
             if (opt == null)
                 return;
 
-            var logger = LogManager.GetLogger("GoogleDriveUploader");
+            var logger = new LoggerConfiguration()
+                .WriteTo.Console()
+                .WriteTo.RollingFile("log-{Date}.txt", buffered: true)
+                .CreateLogger();
             try
             {
                 var config = Config.ReadFromAppSettings();
@@ -31,7 +34,11 @@ namespace Gaev.GoogleDriveUploader.Console
             }
             catch (Exception ex)
             {
-                logger.Error(ex);
+                logger.Error(ex, "");
+            }
+            finally
+            {
+                logger.Dispose();
             }
         }
     }
