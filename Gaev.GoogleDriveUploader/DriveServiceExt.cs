@@ -128,7 +128,9 @@ namespace Gaev.GoogleDriveUploader
             return new DriveService(new BaseClientService.Initializer
             {
                 HttpClientInitializer = credential,
-                ApplicationName = "GoogleDriveUploader"
+                ApplicationName = "GoogleDriveUploader",
+                HttpClientFactory = new UploaderHttpClientFactory(),
+                GZipEnabled = false
             });
         }
     }
