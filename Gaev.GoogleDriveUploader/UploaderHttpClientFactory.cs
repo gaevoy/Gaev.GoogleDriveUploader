@@ -10,7 +10,7 @@ namespace Gaev.GoogleDriveUploader
         public ConfigurableHttpClient CreateHttpClient(CreateHttpClientArgs args)
         {
             var cli = _factory.CreateHttpClient(args);
-            cli.Timeout = TimeSpan.FromMinutes(10);
+            cli.Timeout = TimeSpan.FromMinutes(20);
             return cli;
         }
     }
