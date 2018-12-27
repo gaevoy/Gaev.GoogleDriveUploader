@@ -19,7 +19,8 @@ namespace Gaev.GoogleDriveUploader
         private readonly ILogger _logger;
         private readonly Config _config;
         private readonly DriveService _googleApi;
-        private readonly SemaphoreSlim _throttler;
+        private readonly SemaphoreSlim _fileThrottler;
+        private readonly SemaphoreSlim _googleThrottler;
 
         public Uploader(IDatabase db, ILogger logger, Config config, DriveService googleApi)
         {
@@ -27,7 +28,8 @@ namespace Gaev.GoogleDriveUploader
             _logger = logger;
             _config = config;
             _googleApi = googleApi;
-            _throttler = new SemaphoreSlim(config.DegreeOfParallelism);
+            _fileThrottler = new SemaphoreSlim(Environment.ProcessorCount * 2);
+            _googleThrottler = new SemaphoreSlim(config.DegreeOfParallelism);
         }
 
         public async Task Copy(string sourceDir, string targetDir, string baseDir = null, bool remainsOnly = false)
@@ -111,7 +113,7 @@ namespace Gaev.GoogleDriveUploader
                 var localFiles = localFolder.Files.ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
 
                 await Task.WhenAll(sourceFiles.Select(file
-                    => _throttler.Throttle(()
+                    => _fileThrottler.Throttle(()
                         => UploadFile(localFolder, localFiles, file, baseDir, targetFiles, remainsOnly, statistic))));
 
                 foreach (var dir in src.EnumerateDirectories())
@@ -171,13 +173,16 @@ namespace Gaev.GoogleDriveUploader
                     }
                     else
                     {
-                        var content = await ReadFile(srcFile);
-                        targetFile = await _googleApi.UploadFile(srcFolder.GDriveId, srcFile.Name, content);
-                        if (targetFile == null)
-                            throw new ApplicationException(
-                                fileName + " file has not been uploaded, UploadFile returned null");
-                        _logger.Debug(fileName + " uploaded as " + targetFile.Id);
+                        using (_googleThrottler.Throttle())
+                        {
+                            var content = await ReadFile(srcFile);
+                            targetFile = await _googleApi.UploadFile(srcFolder.GDriveId, srcFile.Name, content);
+                            if (targetFile == null)
+                                throw new ApplicationException(
+                                    fileName + " file has not been uploaded, UploadFile returned null");
+                        }
 
+                        _logger.Debug(fileName + " uploaded as " + targetFile.Id);
                         localFile.GDriveId = targetFile.Id;
                         localFile.Md5 = md5;
                         localFile.Size = fileSize;

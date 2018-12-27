@@ -22,13 +22,13 @@ namespace Gaev.GoogleDriveUploader
 
         public static async Task<IDisposable> Throttle(this SemaphoreSlim throttler)
         {
-            await Task.Yield();
             await throttler.WaitAsync();
             return new Throttler(throttler);
         }      
         
         public static async Task Throttle(this SemaphoreSlim throttler, Func<Task> act)
         {
+            await Task.Yield();
             using (await throttler.Throttle())
                 await act();
         }
