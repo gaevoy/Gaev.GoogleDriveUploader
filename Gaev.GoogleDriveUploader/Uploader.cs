@@ -173,7 +173,7 @@ namespace Gaev.GoogleDriveUploader
                     }
                     else
                     {
-                        using (_googleThrottler.Throttle())
+                        using (await _googleThrottler.Throttle())
                         {
                             var content = await ReadFile(srcFile);
                             targetFile = await _googleApi.UploadFile(srcFolder.GDriveId, srcFile.Name, content);
