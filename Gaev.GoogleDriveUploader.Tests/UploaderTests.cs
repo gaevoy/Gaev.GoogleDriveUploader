@@ -144,6 +144,27 @@ namespace Gaev.GoogleDriveUploader.Tests
         }
 
         [Test]
+        public async Task Uploader_should_upload_remaining_files()
+        {
+            // Given
+            var src = GetTempDir();
+            var f1 = new {name = "1.txt", content = RandomString()};
+            File.WriteAllText(Path.Combine(src, f1.name), f1.content);
+            var uploader = await NewUploader();
+            await uploader.Copy(src, "GDriveTest");
+
+            // When
+            var f2 = new {name = "2.txt", content = RandomString()};
+            File.WriteAllText(Path.Combine(src, f2.name), f2.content);
+            await uploader.Copy(src, "GDriveTest", remainsOnly: true);
+
+            // Then
+            var gdrive = await GetGDriveTree(GoogleApi);
+            Assert.That((string) gdrive["1.txt"].content, Is.EqualTo(ToBase64String(f1.content)));
+            Assert.That((string) gdrive["2.txt"].content, Is.EqualTo(ToBase64String(f2.content)));
+        }
+
+        [Test]
         public async Task Uploader_should_respect_cyrillic()
         {
             // Given

@@ -32,7 +32,8 @@ namespace Gaev.GoogleDriveUploader.Console
                 await uploader.Copy(
                     opt.SourceDir,
                     opt.TargetDir,
-                    opt.BaseDir ?? Environment.CurrentDirectory);
+                    opt.BaseDir ?? Environment.CurrentDirectory, 
+                    opt.RemainsOnly);
             }
             catch (Exception ex)
             {
@@ -59,5 +60,8 @@ namespace Gaev.GoogleDriveUploader.Console
 
         [Option("degreeOfParallelism", Required = false, HelpText = "Degree of parallelism during file upload")]
         public int? DegreeOfParallelism { get; set; }
+
+        [Option("remains-only", Required = false, HelpText = "Upload only remaining files within source directory")]
+        public bool RemainsOnly { get; set; }
     }
 }

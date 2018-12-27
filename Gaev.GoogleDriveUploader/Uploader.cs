@@ -30,7 +30,7 @@ namespace Gaev.GoogleDriveUploader
             _throttler = new SemaphoreSlim(config.DegreeOfParallelism);
         }
 
-        public async Task Copy(string sourceDir, string targetDir, string baseDir = null)
+        public async Task Copy(string sourceDir, string targetDir, string baseDir = null, bool remainsOnly = false)
         {
             var stopwatch = Stopwatch.StartNew();
             baseDir = baseDir ?? sourceDir;
@@ -42,7 +42,8 @@ namespace Gaev.GoogleDriveUploader
                 baseDir,
                 sourceDir = source.FullName,
                 targetDir,
-                degreeOfParallelism = _config.DegreeOfParallelism
+                degreeOfParallelism = _config.DegreeOfParallelism,
+                remainsOnly
             });
             if (!source.FullName.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase))
                 throw new ApplicationException("sourceDir should be inside baseDir");
@@ -52,7 +53,7 @@ namespace Gaev.GoogleDriveUploader
             _logger.Information($"Copying... {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir}");
             var targetId = await EnsureFolderTreeCreated(targetDir);
             var stat = new UploadingStatistic();
-            await UploadFolder(source, targetId, baseDir, stat, shouldCreateTargetFolder: false);
+            await UploadFolder(source, targetId, baseDir, remainsOnly, stat, shouldCreateTargetFolder: false);
             _logger.Information(
                 $"Copied {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir} {stopwatch.Elapsed}");
             if (stat.NumberOfFailedFolders > 0 || stat.NumberOfFailedFiles > 0)
@@ -70,6 +71,7 @@ namespace Gaev.GoogleDriveUploader
             DirectoryInfo src,
             string parentTargetId,
             string baseDir,
+            bool remainsOnly,
             UploadingStatistic statistic,
             bool shouldCreateTargetFolder = true)
         {
@@ -110,10 +112,10 @@ namespace Gaev.GoogleDriveUploader
 
                 await Task.WhenAll(sourceFiles.Select(file
                     => _throttler.Throttle(()
-                        => UploadFile(localFolder, localFiles, file, baseDir, targetFiles, statistic))));
+                        => UploadFile(localFolder, localFiles, file, baseDir, targetFiles, remainsOnly, statistic))));
 
                 foreach (var dir in src.EnumerateDirectories())
-                    await UploadFolder(dir, targetId, baseDir, statistic);
+                    await UploadFolder(dir, targetId, baseDir, remainsOnly, statistic);
 
                 _logger.Information(folderName + " " + stopwatch.Elapsed);
             }
@@ -131,6 +133,7 @@ namespace Gaev.GoogleDriveUploader
             FileInfo srcFile,
             string baseDir,
             Dictionary<string, GoogleFile> targetFiles,
+            bool remainsOnly,
             UploadingStatistic statistic)
         {
             var stopwatch = Stopwatch.StartNew();
@@ -144,6 +147,8 @@ namespace Gaev.GoogleDriveUploader
                     uploaded = true;
                     var status = "skipped";
                     localFile = localFile ?? await GetOrCreateLocalFile(srcFolder, localFiles, fileName);
+                    if (remainsOnly && localFile.GDriveId != null)
+                        return;
                     var md5 = CalculateMd5(srcFile.FullName);
                     fileSize = srcFile.Length;
                     if (targetFiles.TryGetValue(srcFile.Name, out var targetFile))
