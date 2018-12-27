@@ -5,7 +5,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Gaev.GoogleDriveUploader.EntityFramework;
+using Google;
 using Google.Apis.Drive.v3;
+using Google.Apis.Logging;
 using Newtonsoft.Json;
 using NUnit.Framework;
 using Serilog;
@@ -200,6 +202,8 @@ namespace Gaev.GoogleDriveUploader.Tests
             var logger = new LoggerConfiguration()
                 .WriteTo.Console()
                 .CreateLogger();
+            if (ApplicationContext.Logger is NullLogger)
+                ApplicationContext.RegisterLogger(new SerilogLogger(logger));
             return new Uploader(new DbDatabase(), logger, config, googleApi);
         }
 

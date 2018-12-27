@@ -2,6 +2,7 @@
 using System.Threading.Tasks;
 using CommandLine;
 using Gaev.GoogleDriveUploader.EntityFramework;
+using Google;
 using Serilog;
 
 namespace Gaev.GoogleDriveUploader.Console
@@ -19,6 +20,7 @@ namespace Gaev.GoogleDriveUploader.Console
                 .WriteTo.Console()
                 .WriteTo.RollingFile("log-{Date}.txt", buffered: true)
                 .CreateLogger();
+            ApplicationContext.RegisterLogger(new SerilogLogger(logger));
             try
             {
                 var config = Config.ReadFromAppSettings();
