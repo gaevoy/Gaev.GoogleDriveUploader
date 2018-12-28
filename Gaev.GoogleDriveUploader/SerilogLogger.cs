@@ -35,6 +35,8 @@ namespace Gaev.GoogleDriveUploader
 
         public void Warning(string message, params object[] formatArgs)
         {
+            if (message == "Add parameter should not get null values. type={0}, name={1}")
+                return; // Ignore warning here https://github.com/googleapis/google-api-dotnet-client/blob/2df445ea9fce00868cf0a1ea010cb40ef6ed64a8/Src/Support/Google.Apis/Upload/ResumableUpload.cs#L934
             _logger.Warning(message, formatArgs);
         }
 
