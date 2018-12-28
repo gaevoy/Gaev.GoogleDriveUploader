@@ -5,7 +5,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="Google.Apis.Drive.v3" Version="1.36.1.1435" />
+      <PackageReference Include="Google.Apis.Drive.v3" Version="1.36.1.1442" />
       <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="2.2.0" />
       <PackageReference Include="Serilog" Version="2.7.1" />
     </ItemGroup>

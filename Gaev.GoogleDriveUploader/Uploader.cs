@@ -101,15 +101,11 @@ namespace Gaev.GoogleDriveUploader
                 var targetFiles = new Dictionary<string, GoogleFile>(StringComparer.OrdinalIgnoreCase);
                 foreach (var targetFile in await _googleApi.ListFiles(targetId))
                     if (targetFiles.ContainsKey(targetFile.Name))
-                        _logger.Warning(targetFile.Name + " uploaded multiple times");
+                        _logger.Warning(Path.Combine(folderName, targetFile.Name) + " uploaded multiple times");
                     else
                         targetFiles[targetFile.Name] = targetFile;
 
                 var sourceFiles = src.EnumerateFiles().ToList();
-                if (sourceFiles.Count > 1000)
-                    throw new NotImplementedException("Cannot upload more then 1000 files. Count: " +
-                                                      sourceFiles.Count);
-
                 var localFiles = localFolder.Files.ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
 
                 await Task.WhenAll(sourceFiles.Select(file

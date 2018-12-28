@@ -37,6 +37,25 @@ namespace Gaev.GoogleDriveUploader.Tests
         }
 
         [Test]
+        public async Task GoogleApi_should_list_folder_with_paging()
+        {
+            // Given
+            var testDir = await GoogleApi.EnsureFolderCreated("root", "GDriveTest");
+            var files = Enumerable
+                .Range(1, 10)
+                .Select(i => new {name = i + ".txt"})
+                .ToList();
+            await Task.WhenAll(files.Select(file
+                => GoogleApi.UploadFile(testDir.Id, file.name, new MemoryStream())));
+
+            // When
+            var actual = await GoogleApi.ListFiles(testDir.Id, pageSize: 4);
+
+            // Then
+            Assert.That(actual.Select(e => e.Name), Is.EquivalentTo(files.Select(e => e.name)));
+        }
+
+        [Test]
         public async Task Uploader_should_upload_A_folder()
         {
             // Given
