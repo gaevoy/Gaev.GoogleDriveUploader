@@ -23,14 +23,9 @@ namespace Gaev.GoogleDriveUploader.Console
                 .CreateLogger();
             ApplicationContext.RegisterLogger(new SerilogLogger(logger));
             var cancellation = new CancellationTokenSource();
-            AppDomain.CurrentDomain.ProcessExit += (s, e) =>
-            {
-                logger.Information("Cancelling... (via CurrentDomain.ProcessExit)");
-                cancellation.Cancel();
-            };
             System.Console.CancelKeyPress += (s, e) =>
             {
-                logger.Information("Cancelling... (via Console.CancelKeyPress)");
+                logger.Information("Cancelling...");
                 cancellation.Cancel();
                 e.Cancel = true;
             };

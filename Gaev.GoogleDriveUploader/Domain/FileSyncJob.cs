@@ -42,7 +42,6 @@ namespace Gaev.GoogleDriveUploader.Domain
                 {
                     Name = relativeName,
                     FolderName = localFolder.Name,
-                    Md5 = Md5,
                     SeenAt = DateTime.Now
                 };
                 await db.Insert(dbFile);
@@ -62,6 +61,7 @@ namespace Gaev.GoogleDriveUploader.Domain
 
         public async Task Upload(DriveService googleApi, CancellationToken cancellation)
         {
+            // TODO: Read file size, MD5 and upload at once
             using (var content = Source.OpenRead())
                 Target = await googleApi.UploadFile(_targetGDriveId, Source.Name, content, cancellation);
             if (Target == null)

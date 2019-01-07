@@ -150,7 +150,7 @@ namespace Gaev.GoogleDriveUploader
                         return;
                     if (file.Target != null)
                     {
-                        if (file.Target.Md5Checksum != file.Md5)
+                        if (file.Target.Md5Checksum != file.Md5) // TODO: Get rid of rereading file here due to MD5
                         {
                             _logger.Warning(fileName + " uploaded file differs");
                             status = "different";
