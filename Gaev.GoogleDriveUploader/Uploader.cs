@@ -27,7 +27,7 @@ namespace Gaev.GoogleDriveUploader
             _logger = logger;
             _config = config;
             _googleApi = googleApi;
-            _fileThrottler = new SemaphoreSlim(Environment.ProcessorCount * 2);
+            _fileThrottler = new SemaphoreSlim(Environment.ProcessorCount * 5);
             _googleThrottler = new SemaphoreSlim(config.DegreeOfParallelism);
         }
 
@@ -145,6 +145,7 @@ namespace Gaev.GoogleDriveUploader
                     uploaded = true;
                     var status = "skipped";
                     await file.Initialize(_db, srcFolder, localFiles, fileName);
+                    if (ctx.Cancellation.IsCancellationRequested) return;
                     if ((ctx.RemainsOnly || ctx.EstimateOnly) && file.DbFile.GDriveId != null)
                         return;
                     if (file.Target != null)
