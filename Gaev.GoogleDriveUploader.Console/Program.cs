@@ -19,7 +19,7 @@ namespace Gaev.GoogleDriveUploader.Console
 
             var logger = new LoggerConfiguration()
                 .WriteTo.Console()
-                .WriteTo.RollingFile("log-{Date}.txt", buffered: true, shared: true)
+                .WriteTo.RollingFile("log-{Date}.txt", buffered: true)
                 .CreateLogger();
             ApplicationContext.RegisterLogger(new SerilogLogger(logger));
             var cancellation = new CancellationTokenSource();
