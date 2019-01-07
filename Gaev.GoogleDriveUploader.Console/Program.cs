@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using System.Threading.Tasks;
 using CommandLine;
 using Gaev.GoogleDriveUploader.EntityFramework;
@@ -18,22 +19,43 @@ namespace Gaev.GoogleDriveUploader.Console
 
             var logger = new LoggerConfiguration()
                 .WriteTo.Console()
-                .WriteTo.RollingFile("log-{Date}.txt", buffered: true)
+                .WriteTo.RollingFile("log-{Date}.txt", buffered: true, shared: true)
                 .CreateLogger();
             ApplicationContext.RegisterLogger(new SerilogLogger(logger));
+            var cancellation = new CancellationTokenSource();
+            AppDomain.CurrentDomain.ProcessExit += (s, e) =>
+            {
+                logger.Information("Cancelling... (via CurrentDomain.ProcessExit)");
+                cancellation.Cancel();
+            };
+            System.Console.CancelKeyPress += (s, e) =>
+            {
+                logger.Information("Cancelling... (via Console.CancelKeyPress)");
+                cancellation.Cancel();
+                e.Cancel = true;
+            };
             try
             {
                 var config = Config.ReadFromAppSettings();
                 config.DegreeOfParallelism = opt.DegreeOfParallelism ?? config.DegreeOfParallelism;
                 var db = new DbDatabase();
                 await db.EnsureCreated();
-                var googleApi = await DriveServiceExt.Connect(config);
+                var googleApi = await DriveServiceExt.Connect(config, cancellation.Token);
                 var uploader = new Uploader(db, logger, config, googleApi);
                 await uploader.Copy(
                     opt.SourceDir,
                     opt.TargetDir,
-                    opt.BaseDir ?? Environment.CurrentDirectory, 
-                    opt.RemainsOnly);
+                    opt.BaseDir ?? Environment.CurrentDirectory,
+                    new UploadingContext
+                    {
+                        Cancellation = cancellation.Token,
+                        RemainsOnly = opt.RemainsOnly,
+                        EstimateOnly = opt.EstimateOnly
+                    });
+            }
+            catch (OperationCanceledException)
+            {
+                logger.Information("Cancelled");
             }
             catch (Exception ex)
             {
@@ -63,5 +85,8 @@ namespace Gaev.GoogleDriveUploader.Console
 
         [Option("remains-only", Required = false, HelpText = "Upload only remaining files within source directory")]
         public bool RemainsOnly { get; set; }
+
+        [Option("estimate-only", Required = false, HelpText = "Estimate how much size remaining to be uploaded")]
+        public bool EstimateOnly { get; set; }
     }
 }

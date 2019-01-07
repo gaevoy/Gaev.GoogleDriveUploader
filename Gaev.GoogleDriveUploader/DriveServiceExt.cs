@@ -29,26 +29,15 @@ namespace Gaev.GoogleDriveUploader
 
         public static async Task<IList<File>> ListFoldersAndFiles(
             this DriveService cli,
-            string parentId = "root")
-        {
-            var req = cli.Files.List();
-            req.Q = $"'{parentId}' in parents";
-            req.PageSize = 1000;
-            req.Fields = "files(id, name, mimeType, md5Checksum, size)";
-            return (await req.ExecuteAsync()).Files;
-        }
-
-        public static async Task<IList<File>> ListFiles(
-            this DriveService cli,
             string parentId = "root",
             int pageSize = 1000)
         {
-            var files = new List<Google.Apis.Drive.v3.Data.File>();
+            var files = new List<File>();
             Google.Apis.Drive.v3.Data.FileList prev = null;
             do
             {
                 var req = cli.Files.List();
-                req.Q = $"'{parentId}' in parents and mimeType!='application/vnd.google-apps.folder'";
+                req.Q = $"'{parentId}' in parents";
                 req.PageSize = pageSize;
                 req.Fields = "nextPageToken, files(id, name, mimeType, md5Checksum, size)";
                 if (prev != null)
@@ -78,7 +67,8 @@ namespace Gaev.GoogleDriveUploader
         public static async Task<File> UploadFile(this DriveService cli,
             string parentId,
             string name,
-            Stream content)
+            Stream content,
+            CancellationToken cancellation)
         {
             var fileMetadata = new File
             {
@@ -87,7 +77,7 @@ namespace Gaev.GoogleDriveUploader
             };
             var req = cli.Files.Create(fileMetadata, content, MimeTypeMap.GetMimeType(Path.GetExtension(name)));
             req.Fields = "id";
-            await req.UploadAsync();
+            await req.UploadAsync(cancellation);
             return req.ResponseBody;
         }
 
@@ -115,11 +105,11 @@ namespace Gaev.GoogleDriveUploader
         {
             var list = await cli.ListFolders(parentId, name);
             if (!list.Any())
-                return await cli.UploadFile(parentId, name, content);
+                return await cli.UploadFile(parentId, name, content, CancellationToken.None);
             return list.First();
         }
 
-        public static async Task<DriveService> Connect(Config config)
+        public static async Task<DriveService> Connect(Config config, CancellationToken cancellation)
         {
             var credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
                 new ClientSecrets
@@ -133,7 +123,7 @@ namespace Gaev.GoogleDriveUploader
                     DriveService.Scope.DriveFile
                 },
                 Environment.UserName,
-                CancellationToken.None,
+                cancellation,
                 new SqliteStore());
 
             return new DriveService(new BaseClientService.Initializer

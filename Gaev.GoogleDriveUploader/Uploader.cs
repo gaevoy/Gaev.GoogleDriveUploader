@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Gaev.GoogleDriveUploader.Domain;
@@ -32,8 +31,10 @@ namespace Gaev.GoogleDriveUploader
             _googleThrottler = new SemaphoreSlim(config.DegreeOfParallelism);
         }
 
-        public async Task Copy(string sourceDir, string targetDir, string baseDir = null, bool remainsOnly = false)
+        public async Task Copy(string sourceDir, string targetDir, string baseDir = null, UploadingContext ctx = null)
         {
+            ctx = ctx ?? new UploadingContext();
+
             var stopwatch = Stopwatch.StartNew();
             baseDir = baseDir ?? sourceDir;
             sourceDir = Path.Combine(baseDir, sourceDir);
@@ -45,7 +46,8 @@ namespace Gaev.GoogleDriveUploader
                 sourceDir = source.FullName,
                 targetDir,
                 degreeOfParallelism = _config.DegreeOfParallelism,
-                remainsOnly
+                ctx.RemainsOnly,
+                ctx.EstimateOnly
             });
             if (!source.FullName.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase))
                 throw new ApplicationException("sourceDir should be inside baseDir");
@@ -53,229 +55,161 @@ namespace Gaev.GoogleDriveUploader
                 throw new ApplicationException("source is not exist");
 
             _logger.Information($"Copying... {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir}");
-            var targetId = await EnsureFolderTreeCreated(targetDir);
-            var stat = new UploadingStatistic();
-            await UploadFolder(source, targetId, baseDir, remainsOnly, stat, shouldCreateTargetFolder: false);
+            var target = await EnsureFolderTreeCreated(targetDir);
+            var folder = new FolderSyncJob(source, target);
+            await UploadFolder(null, folder, baseDir, ctx);
             _logger.Information(
                 $"Copied {baseDir}: {GetShortFolderName(baseDir, source.FullName)} -> {targetDir} {stopwatch.Elapsed}");
-            if (stat.NumberOfFailedFolders > 0 || stat.NumberOfFailedFiles > 0)
+            if (ctx.NumberOfFailedFolders > 0 || ctx.NumberOfFailedFiles > 0)
                 _logger.Warning("{@statistic}", new
                 {
-                    stat.NumberOfFailedFolders,
-                    stat.NumberOfFailedFiles,
-                    SizeUploaded = stat.SizeUploaded.FormatFileSize()
+                    ctx.NumberOfFailedFolders,
+                    ctx.NumberOfFailedFiles,
+                    SizeUploaded = ctx.SizeUploaded.FormatFileSize()
                 });
             else
-                _logger.Information("{@statistic}", new {SizeUploaded = stat.SizeUploaded.FormatFileSize()});
+                _logger.Information("{@statistic}", new
+                {
+                    SizeUploaded = ctx.SizeUploaded.FormatFileSize(),
+                    cancelled = ctx.Cancellation.IsCancellationRequested
+                });
         }
 
         private async Task UploadFolder(
-            DirectoryInfo src,
-            string parentTargetId,
+            FolderSyncJob parent,
+            FolderSyncJob folder,
             string baseDir,
-            bool remainsOnly,
-            UploadingStatistic statistic,
-            bool shouldCreateTargetFolder = true)
+            UploadingContext ctx)
         {
+            if (ctx.Cancellation.IsCancellationRequested) return;
+
             var stopwatch = Stopwatch.StartNew();
-            var folderName = GetShortFolderName(baseDir, src.FullName);
+            var folderName = GetShortFolderName(baseDir, folder.Source.FullName);
             try
             {
-                var localFolder = await GetOrCreateLocalFolder(folderName);
-                var targetId = shouldCreateTargetFolder
-                    ? (await _googleApi.EnsureFolderCreated(parentTargetId, src.Name)).Id
-                    : parentTargetId;
-                if (localFolder.GDriveId != null && localFolder.GDriveId != targetId)
+                await folder.Initialize(_db, folderName);
+                if (folder.Target == null)
                 {
+                    await folder.Upload(_db, _googleApi, parent.Target.Id);
+                    await folder.UpdateDb(_db);
+                }
+                else if (folder.DbFolder.GDriveId == null)
+                    await folder.UpdateDb(_db);
+                else if (folder.Target.Id != folder.DbFolder.GDriveId)
                     throw new ApplicationException(
-                        $"GDriveId for folder are different {localFolder.GDriveId} <> {targetId}");
-                }
+                        $"GDriveId for folder are different {folder.DbFolder.GDriveId} <> {folder.Target.Id}");
 
-                if (localFolder.GDriveId == null)
-                {
-                    localFolder.GDriveId = targetId;
-                    localFolder.UploadedAt = DateTime.Now;
-                    await _db.Update(localFolder);
-                }
+                if (ctx.Cancellation.IsCancellationRequested) return;
+                await folder.LoadChildren(_googleApi, _logger);
 
-                var targetFiles = new Dictionary<string, GoogleFile>(StringComparer.OrdinalIgnoreCase);
-                foreach (var targetFile in await _googleApi.ListFiles(targetId))
-                    if (targetFiles.ContainsKey(targetFile.Name))
-                        _logger.Warning(Path.Combine(folderName, targetFile.Name) + " uploaded multiple times");
-                    else
-                        targetFiles[targetFile.Name] = targetFile;
-
-                var sourceFiles = src.EnumerateFiles().ToList();
-                var localFiles = localFolder.Files.ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
-
-                await Task.WhenAll(sourceFiles.Select(file
+                if (ctx.Cancellation.IsCancellationRequested) return;
+                var localFiles =
+                    folder.DbFolder.Files.ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
+                await Task.WhenAll(folder.Files.Select(file
                     => _fileThrottler.Throttle(()
-                        => UploadFile(localFolder, localFiles, file, baseDir, targetFiles, remainsOnly, statistic))));
+                        => UploadFile(folder.DbFolder, localFiles, file, baseDir, ctx))));
 
-                foreach (var dir in src.EnumerateDirectories())
-                    await UploadFolder(dir, targetId, baseDir, remainsOnly, statistic);
+                if (ctx.Cancellation.IsCancellationRequested) return;
+                foreach (var child in folder.Folders)
+                    await UploadFolder(folder, child, baseDir, ctx);
 
+                if (ctx.Cancellation.IsCancellationRequested) return;
                 _logger.Information(folderName + " " + stopwatch.Elapsed);
+            }
+            catch (OperationCanceledException)
+            {
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, folderName + " " + stopwatch.Elapsed);
-                lock (statistic)
-                    statistic.NumberOfFailedFolders++;
+                lock (ctx)
+                    ctx.NumberOfFailedFolders++;
             }
         }
 
         private async Task UploadFile(
             LocalFolder srcFolder,
             Dictionary<string, LocalFile> localFiles,
-            FileInfo srcFile,
+            FileSyncJob file,
             string baseDir,
-            Dictionary<string, GoogleFile> targetFiles,
-            bool remainsOnly,
-            UploadingStatistic statistic)
+            UploadingContext ctx)
         {
+            if (ctx.Cancellation.IsCancellationRequested) return;
+
             var stopwatch = Stopwatch.StartNew();
-            var fileName = srcFile.FullName.Substring(baseDir.Length);
-            long fileSize = 0;
+            var fileName = file.Source.FullName.Substring(baseDir.Length);
             bool uploaded = true;
-            LocalFile localFile = null;
             for (int probe = 1; probe <= 3; probe++)
                 try
                 {
                     uploaded = true;
                     var status = "skipped";
-                    localFile = localFile ?? await GetOrCreateLocalFile(srcFolder, localFiles, fileName);
-                    if (remainsOnly && localFile.GDriveId != null)
+                    await file.Initialize(_db, srcFolder, localFiles, fileName);
+                    if ((ctx.RemainsOnly || ctx.EstimateOnly) && file.DbFile.GDriveId != null)
                         return;
-                    var md5 = CalculateMd5(srcFile.FullName);
-                    fileSize = srcFile.Length;
-                    if (targetFiles.TryGetValue(srcFile.Name, out var targetFile))
+                    if (file.Target != null)
                     {
-                        if (targetFile.Md5Checksum != md5)
+                        if (file.Target.Md5Checksum != file.Md5)
                         {
                             _logger.Warning(fileName + " uploaded file differs");
                             status = "different";
                             uploaded = false;
                         }
-                        else if (localFile.GDriveId == null)
+                        else if (file.DbFile.GDriveId == null)
                         {
-                            localFile.GDriveId = targetFile.Id;
-                            localFile.Md5 = md5;
-                            localFile.Size = fileSize;
-                            localFile.UploadedAt = DateTime.Now;
-                            await _db.Update(localFile);
+                            await file.UpdateDb(_db);
                             status = "synced";
                         }
                     }
                     else
                     {
-                        using (await _googleThrottler.Throttle())
+                        if (ctx.EstimateOnly)
+                            status = "to upload";
+                        else
                         {
-                            var content = await ReadFile(srcFile);
-                            targetFile = await _googleApi.UploadFile(srcFolder.GDriveId, srcFile.Name, content);
-                            if (targetFile == null)
-                                throw new ApplicationException(
-                                    fileName + " file has not been uploaded, UploadFile returned null");
+                            using (await _googleThrottler.Throttle())
+                                await file.Upload(_googleApi, ctx.Cancellation);
+                            _logger.Debug(fileName + " uploaded as " + file.Target.Id);
+                            await file.UpdateDb(_db);
+                            status = "uploaded";
                         }
 
-                        _logger.Debug(fileName + " uploaded as " + targetFile.Id);
-                        localFile.GDriveId = targetFile.Id;
-                        localFile.Md5 = md5;
-                        localFile.Size = fileSize;
-                        localFile.UploadedAt = DateTime.Now;
-                        await _db.Update(localFile);
-                        status = "uploaded";
-                        lock (statistic)
-                            statistic.SizeUploaded += localFile.Size;
+                        lock (ctx)
+                            ctx.SizeUploaded += file.Size;
                     }
 
                     _logger.Information(fileName + " {@more}",
-                        new {status, duration = stopwatch.Elapsed, size = fileSize.FormatFileSize()});
+                        new {status, duration = stopwatch.Elapsed, size = file.Size.FormatFileSize()});
                     break;
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
                 }
                 catch (Exception ex)
                 {
                     _logger.Error(ex, fileName + " {@more}",
-                        new {probe, duration = stopwatch.Elapsed, size = fileSize.FormatFileSize()});
+                        new {probe, duration = stopwatch.Elapsed, size = file.Size.FormatFileSize()});
                     uploaded = false;
                 }
 
             if (!uploaded)
-                lock (statistic)
-                    statistic.NumberOfFailedFiles++;
+                lock (ctx)
+                    ctx.NumberOfFailedFiles++;
         }
 
-        private static string CalculateMd5(string filename)
-        {
-            using (var md5 = MD5.Create())
-            using (var stream = File.OpenRead(filename))
-                return BitConverter.ToString(md5.ComputeHash(stream)).Replace("-", "").ToLower();
-        }
-
-        private async Task<string> EnsureFolderTreeCreated(string path)
+        private async Task<GoogleFile> EnsureFolderTreeCreated(string path)
         {
             var dirs = path.Split('/', '\\').Where(e => !string.IsNullOrWhiteSpace(e));
-            var gId = "root";
+            var folder = new GoogleFile {Id = "root"};
             foreach (var dir in dirs)
-                gId = (await _googleApi.EnsureFolderCreated(gId, dir)).Id;
-            return gId;
-        }
-
-        private async Task<LocalFolder> GetOrCreateLocalFolder(string name)
-        {
-            name = name.ToLower();
-            var folder = await _db.GetFolder(name);
-            if (folder == null)
-            {
-                folder = new LocalFolder
-                {
-                    Name = name,
-                    SeenAt = DateTime.Now,
-                    Files = new List<LocalFile>()
-                };
-                await _db.Insert(folder);
-            }
-
+                folder = await _googleApi.EnsureFolderCreated(folder.Id, dir);
             return folder;
-        }
-
-        private async Task<LocalFile> GetOrCreateLocalFile(
-            LocalFolder localFolder,
-            Dictionary<string, LocalFile> localFiles, string fileName)
-        {
-            if (!localFiles.TryGetValue(fileName, out var localFile))
-            {
-                localFile = new LocalFile
-                {
-                    Name = fileName,
-                    FolderName = localFolder.Name,
-                    SeenAt = DateTime.Now
-                };
-                await _db.Insert(localFile);
-            }
-
-            return localFile;
         }
 
         private static string GetShortFolderName(string baseDir, string srcDir)
         {
             return srcDir.Length == baseDir.Length ? "\\" : srcDir.Substring(baseDir.Length);
-        }
-
-        private static async Task<MemoryStream> ReadFile(FileInfo srcFile)
-        {
-            // https://github.com/googleapis/google-api-dotnet-client/issues/833#issuecomment-362898041
-            var content = new MemoryStream();
-            using (var stream = srcFile.OpenRead())
-                await stream.CopyToAsync(content);
-            return content;
-        }
-
-        class UploadingStatistic
-        {
-            public int NumberOfFailedFiles { get; set; }
-            public int NumberOfFailedFolders { get; set; }
-            public long SizeUploaded { get; set; }
         }
     }
 }
